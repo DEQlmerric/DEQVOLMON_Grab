@@ -17,8 +17,8 @@ type <- sqlFetch(VM2.sql,"dbo.tlu_Type")
 odbcClose(VM2.sql)
 
 # bring in dataset - 
-data <- read_excel("~/DEQVOLMON_Grab/TestingData/Test_SubId0224/Test0224SdcwcGrab_4r.xlsx", sheet = "data") 
-project <- read_excel("~/DEQVOLMON_Grab/TestingData/Test_SubId0224/Test0224SdcwcGrab_4r.xlsx", sheet = "Project_Info", skip =5) 
+data <- read_excel("E:/DEQVOLMON_Grab/TestingData/Test_SubId0224/Test0224SdcwcGrab_4r.xlsx", sheet = "data") 
+project <- read_excel("E:/DEQVOLMON_Grab/TestingData/Test_SubId0224/Test0224SdcwcGrab_4r.xlsx", sheet = "Project_Info", skip =5) 
 sub_id <- 224
 
 ### restructure the data template ####
@@ -50,9 +50,12 @@ res <- data %>%
        left_join(type, by = c('act_type' = 'TypeID')) %>%# this doesn't call out field primaries 
        left_join(sub, by = c('subid' = 'SubID')) %>%
        mutate(Date4Id = strftime(DateTime, format = '%Y%m%d%I%M', tz = 'UTC'), 
+              Date4group = strftime(DateTime, format = '%Y%m%d', tz = 'UTC'), 
               act_id = paste(subid,Date4Id,LASAR,TypeIDText,sep = "-"), # fix date format
-              act_group = paste(subid,Date4Id,samplers,sep = "-"),
-              result_id = paste(act_id,CharIDText,sep = "-")) # this doesn't nat change names Char names 
+              act_group = paste(subid,Date4group,sep = "-"), # add samplers for other batch type?? - how will this be entered in? 
+              result_id = paste(act_id,CharIDText,sep = "-"),
+              sub_char = paste(sub_id, CharIDText, sep = "-"),
+              actgrp_char = paste(act_group, CharIDText, sep = "-"))  
 
 
 #### QC checks for char and duplicates#### 
