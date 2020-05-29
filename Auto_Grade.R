@@ -6,6 +6,7 @@ library(tidyverse)
 library(odbc)
 library(readxl)
 library(data.table)
+library(sqldf)
 
 ### Connect to VolMon DB 
 VM2.sql <- odbcConnect("VolMon2")
@@ -189,3 +190,65 @@ QCmodtest <- QC_Mod %>%
   filter(actgrp_char == "0050-20130813-ec") %>%
   select(ResultID, StartDateTime, DEQ_PREC,IsMaxDate, ApplicableAfter, MaXDate, Mod_DEQ_PREC, groupposition )
 
+# Join the data.frames to find DQL value
+# I don't know how this works. I pulled it off the internet
+# This should perform "grade spreading"
+
+grade_mixed_result <-
+  sqldf(
+    "SELECT grade_mixed_res_prelim_dql.actgrp_char, grade_mixed_res_prelim_dql.ResultID, 
+            grade_mixed_res_prelim_dql.Result,  grade_mixed_res_prelim_dql.StartDateTime ,
+            QC_Mod.DEQ_PREC as prelim_dql
+    FROM grade_mixed_res_prelim_dql, QC_Mod
+    WHERE grade_mixed_res_prelim_dql.actgrp_char == QC_Mod.actgrp_char AND
+    (
+    (grade_mixed_res_prelim_dql.StartDateTime <= QC_Mod.StartDateTime AND QC_Mod.groupposition == 1) 
+       OR
+           (grade_mixed_res_prelim_dql.StartDateTime <= QC_Mod.StartDateTime AND QC_Mod.ApplicableAfter IS NULL) 
+       OR
+          (QC_Mod.ApplicableAfter IS NOT NULL AND grade_mixed_res_prelim_dql.StartDateTime > QC_Mod.ApplicableAfter) 
+       OR
+    (grade_mixed_res_prelim_dql.StartDateTime > QC_Mod.StartDateTime AND QC_Mod.IsMaxDate == 1)
+    )"
+  )
+
+#######
+######
+#####
+####
+###
+## 
+# below is the prelim grade table
+
+
+#merge mixed reults back into table
+grade_prelim_DQL <- merge(grade_res_prelim_DQL, grade_mixed_result, by = "ResultID", all.x = T ) %>%
+  #if grade is mixed, assign new spread out grade, else use original grade
+  mutate(prelim_DQL = ifelse(!is.na(prelim_dql.y), prelim_dql.y, prelim_dql.x)) %>% 
+  #If result is a QC sample, use the grade from QC sample. Some days have more than 1 QC sample 
+  #and grade_mixed_result assigns lowest grade for the day. This ensures QC results retain
+  #original grade 
+  mutate(prelim_DQL = ifelse(DEQ_PREC == "" | is.na(DEQ_PREC), prelim_DQL, DEQ_PREC)) %>%
+  #below here is just cleanup from the merge process
+  mutate(Result = Result.x) %>%
+  mutate(StartDateTime = StartDateTime.x) %>%
+  mutate(actgrp_char = actgrp_char.x) %>%
+  mutate(sub_char = sub_char.x) %>%
+  select(
+    -Result.x,
+    -Result.y,
+    -actgrp_char.x,
+    -actgrp_char.y,
+    -prelim_dql.x,
+    -prelim_dql.y,
+    -StartDateTime.x,
+    -StartDateTime.y,
+    -sub_char.x,
+    -sub_char.y
+  ) %>%
+  mutate(resactgrp = paste(ResultID, actgrp_char, sep = "-"))
+
+test <- grade_prelim_DQL %>%
+  filter(grepl("0050-",ResultID),
+         CharID == "ec") %>%
+  arrange(CharID, StartDateTime)

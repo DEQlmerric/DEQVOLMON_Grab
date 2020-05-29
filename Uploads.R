@@ -1,37 +1,55 @@
 ### Upload to VolMon and AWQMS uploads 
 ## 
-
+library(tidyverse)
+library(RODBC) 
+library(odbc)
 library(lubridate)
-
+#library(sqldf)
+library(DBI)
 
 VM2T.sql <- odbcConnect("VolMon_testload") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
 t.ActGrp <- sqlFetch(VM2T.sql, "dbo.t_ActGrp") 
 stations <- sqlFetch(VM2T.sql, "dbo.tlu_Stations") # how does this get populated?
 units <- sqlFetch(VM2T.sql, "dbo.tlu_units")
 context <- sqlFetch(VM2T.sql, "dbo.tlu_Context")
+odbcClose(VM2T.sql)
 
 #### t_ActGrp ####
 ActGroup <- res %>%
             select(act_group,Date4group) %>% 
             distinct() %>% 
-            mutate(ActGrpIDText = paste(act_group,"Test2",sep = "-"),
+            mutate(ActGrpIDText = paste(act_group,"Test4",sep = "-"),  #### update me to get rid of test!
             ActGrpTypeID = 311) %>%# I need to understand what the other options are  
             rename(ActGrpComment = Date4group) %>% # what is the comment? 
             select(ActGrpIDText,ActGrpComment,ActGrpTypeID)
 
-# write to the database defined by the connection 
+#### write to the database defined by the connection 
+
+#build a vector string of ActGrpIDTexts for use in SQL query
+ag_ids <- ActGroup$ActGrpIDText 
+ag_idsString <- toString(sprintf("'%s'", ag_ids))
+ag_sql_fmt <- "SELECT * FROM t_ActGrp WHERE ActGrpIDText IN (%s)"
+# build an SQL query
+qryAGt <- sprintf(ag_sql_fmt, ag_idsString)
+
+#### MUST CONFIRM THIS IS ZERO BEFORE LOADING DATA ####
+QC_actgroup <- sqlQuery(VM2T.sql, qryAGt)             #
+#######################################################
+
+#### Write activity group to the DB ####
 # creates a temporary table 
 sqlSave(VM2T.sql, ActGroup, tablename = "TempActGrp", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE)
-
 #SQL intset query
 qryAG <- "INSERT INTO t_ActGrp (ActGrpIDText, ActGrpComment, ActGrpTypeID)
 SELECT ActGrpIDText, ActGrpComment, ActGrpTypeID FROM TempActGrp;"
-
 # run the SQL query 
-sqlQuery(VM2T.sql, qryAG, max = 0, buffsize = length(ActGroup$ActGrpIDText))#2Act$ActGrpID))
-
+sqlQuery(VM2T.sql, qryAG, max = 0, buffsize = length(ActGroup$ActGrpIDText))
 # delete temp table 
 sqlDrop(VM2T.sql, "TempActGrp")
+
+#### MUST CONFIRM THIS NUMBER MATCHES ActGroup ########
+QC_actgroup <- sqlQuery(VM2T.sql, qryAGt)             #
+#######################################################
 
 #### t_Activity ####
 act <- res %>% 
@@ -53,14 +71,35 @@ act <- res %>%
               SmplColEquipComment = NA) %>%
        select(act_id,act_type,subid,LASAR,ContextID,StationDes,DateTime,StartDateTimeZoneID,
          EndDateTime,EndDateTimeZoneID,MediaID,SubOrganizationID,SmplColMthdID,SmplColEquip,
-         SmplEquipID,SmplColEquipComment,SampleDepth,SmplDepthUnitID,Org_Comment,DEQ_Comment,samplers) %>%   
+         SmplEquipID,SmplColEquipComment,SampleDepth,SmplDepthUnitID,Org_Comment,DEQ_Comment,samplers) %>%  
        rename(ActivityIDText = act_id, ActivityTypeId =act_type,SubID = subid,SiteID = LASAR,
               SiteContextID = ContextID, SiteDescription = StationDes, StartDateTime = DateTime,
-              ActivityOrgID = SubOrganizationID,SmplDepth =SampleDepth, Samplers = samplers)
+              ActivityOrgID = SubOrganizationID,SmplDepth =SampleDepth, Samplers = samplers) 
+        as.character(act$SiteID)
+
+#### Interact with the database ###
+#build a vector string of ActivityIDTexts for use in SQL query
+a_ids <- act$ActivityIDText
+a_idsString <- toString(sprintf("'%s'", a_ids))
+a_sql_fmt <- "SELECT * FROM t_Activity WHERE ActivityIDText IN (%s)"
+# build an SQL query
+qryActt <- sprintf(a_sql_fmt, a_idsString)
+
+#### MUST CONFIRM THIS IS ZERO BEFORE LOADING DATA ####
+QC_act <- sqlQuery(VM2T.sql, qryActt)                 #
+#######################################################
 
 # write to the database defined by the connection 
-# creates a temporary table 
-sqlSave(VM2T.sql, act, tablename = "TempAct", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE)
+
+# define variable types
+columnTypes <- list(ActivityIDText = "nvarchar(255)",ActivityTypeId = "int" ,SubID = "int",SiteID = "nvarchar(255)",
+                    SiteContextID = "int", SiteDescription = "nvarchar(255)", StartDateTime = "datetime",
+                    StartDateTimeZoneID = "int",EndDateTime = "datetime",EndDateTimeZoneID = "int", MediaID = "int",
+                    ActivityOrgID = "int",SmplColMthdID ="int", SmplColEquip ="nvarchar(255)",SmplEquipID = "nvarchar(255)",
+                    SmplColEquipComment= "nvarchar(255)",SmplDepth ="nvarchar(255)",SmplDepthUnitID = "int",
+                    Org_Comment = "nvarchar(255)",DEQ_Comment = "nvarchar(255)",Samplers="nvarchar(255)")
+# creates a temporary table
+sqlSave(VM2T.sql, act, tablename = "TempAct", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = columnTypes)
 
 #SQL intset query
 qryA <- "INSERT INTO t_Activity (ActivityIDText,ActivityTypeId,SubID,SiteID,SiteContextID,SiteDescription,StartDateTime,

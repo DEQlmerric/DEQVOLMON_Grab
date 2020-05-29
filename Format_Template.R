@@ -3,16 +3,20 @@
 ## Rewrite of scripts originally written by Steve Hanson
 
 library(tidyverse)
-require(RODBC) #get rid of this
+library(RODBC) 
 library(odbc)
 library(readxl)
 library(data.table)
+#library(DBI)
 
 ### connect to VOLMON2 ###
-
+### attempted to use DBI, but got an error when trying to bring in submission and type tables  
+### google search looks like it is related to the use of nvarchar(max) in these tables 
+#VM2.sql <- DBI::dbConnect(odbc::odbc(), "VolMon2") 
+#dbListTables(VM2.sql)
 VM2.sql <- odbcConnect("VolMon2") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
-sub <-    sqlFetch(VM2.sql, "dbo.t_Submission") 
-chars <-  sqlFetch(VM2.sql,"dbo.tlu_Characteristic")
+sub <- sqlFetch(VM2.sql,"dbo.t_Submission") 
+chars <- sqlFetch(VM2.sql,"dbo.tlu_Characteristic")
 type <- sqlFetch(VM2.sql,"dbo.tlu_Type")
 odbcClose(VM2.sql)
 
