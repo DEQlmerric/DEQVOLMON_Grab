@@ -8,21 +8,30 @@ library(readxl)
 library(data.table)
 library(sqldf)
 
-### Connect to VolMon DB 
-VM2.sql <- odbcConnect("VolMon2")
-QCcrit <- sqlFetch(VM2.sql,"dbo.tlu_Qccrit")
-anom_crit <- sqlFetch(VM2.sql,"dbo.tlu_AnomCrit")
-  
-odbcClose(VM2.sql)
-#### Precision Checks & QC summaries ####
+#This prevents scientific notation from being used and forces all imported fields to be character or numeric
+options('scipen' = 50, stringsAsFactors = FALSE)
 
-prec_grade <- res %>% # source from the Format_template fxn?
-        left_join(QCcrit, by = c('CharIDText'= 'charidText')) %>%
+### Connect to VolMon DB 
+VM2.sql <- odbcConnect("VolMon2") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
+QCcrit <- sqlFetch(VM2.sql,"dbo.tlu_Qccrit") 
+chars <- sqlFetch(VM2.sql,"dbo.tlu_Characteristic")
+anom_crit <- sqlFetch(VM2.sql,"dbo.tlu_AnomCrit")
+type <- sqlFetch(VM2.sql,"dbo.tlu_Type")
+odbcClose(VM2.sql)
+
+
+ #### Precision Checks & QC summaries ####
+
+prec_grade <- res %>% 
+        left_join(chars, by = 'CharIDText') %>% 
+        left_join(QCcrit, by = c('CharID'= 'charid')) %>%
+        distinct() %>%
         group_by(LASAR,DateTime,CharIDText) %>% 
         mutate(Dup = ifelse(n() > 1, 1, 0)) %>%
         ungroup() %>% 
         filter(Dup == 1) %>% 
-        select(LASAR,DateTime,Char,CharIDText,actgrp_char,sub_char,sample_type,Result,QCcalc,DQLA,DQLB) %>%
+        select(LASAR,DateTime,Char,CharIDText,actgrp_char,sub_char,sample_type,Result,result_id,QCcalc,DQLA,DQLB) %>%
+        filter(sample_type == 'dup') %>%
         group_by(LASAR,DateTime,CharIDText) %>%
         arrange(sample_type, .by_group = TRUE) %>%
         mutate(prec_val = case_when(QCcalc == "LogDiff" ~
@@ -33,57 +42,56 @@ prec_grade <- res %>% # source from the Format_template fxn?
         #filter(prec_val == max(prec_val)) %>%
         mutate(prec_DQL = case_when(prec_val <= DQLA ~ "A",
                                     prec_val > DQLA & prec_val <= DQLB ~ "B",
-                                    TRUE ~ "C"))
+                                    TRUE ~ "C")) %>%
+        distinct()
 
-#Create a table that counts Grade types by actgrp_char
-QAQC_grade_count <- prec_grade %>%
-  mutate(A = ifelse(prec_DQL== 'A', 1, 0)) %>%
-  mutate(B = ifelse(prec_DQL == 'B', 1, 0)) %>%
-  mutate(C = ifelse(prec_DQL == 'C', 1, 0)) %>%
-  mutate(E = ifelse(prec_DQL == 'E', 1, 0)) %>%
-  group_by(actgrp_char) %>%
-  summarize(countofQAQC = n(),
-            sumofA = sum(A),
-            sumofB = sum(B),
-            sumofC = sum(C),
-            sumofE = sum(E)) %>%
-  mutate(pctA = (sumofA / countofQAQC),
-         pctB = (sumofB / countofQAQC),
-         pctC = (sumofC / countofQAQC),
-          pctE = (sumofE / countofQAQC))
+## Add precision grade to results 
+res_prec_grade <- prec_grade %>% ungroup() %>% select(result_id,prec_val,prec_DQL) %>% 
+                  right_join(res, by = 'result_id') 
+## calucal
+pct_QC_actgrp_char <- res_prec_grade %>% 
+                      select(LASAR,DateTime,subid,act_type,sample_type,TypeIDText,TypeShortName,Date4Id,Date4group,act_id,
+                      act_group,CharIDText,result_id,sub_char,actgrp_char,Result,prec_val,prec_DQL) %>%
+                      mutate(A = ifelse(prec_DQL== 'A', 1, 0),
+                           B = ifelse(prec_DQL == 'B', 1, 0),
+                           C = ifelse(prec_DQL == 'C', 1, 0),
+                           QC = ifelse(sample_type == 'dup', 1, 0),
+                           nonQC = ifelse(sample_type == 'sample', 1, 0)) %>%
+                      group_by(actgrp_char) %>%
+                      summarize(grp_count = n(),
+                              sumofQC = sum(QC),
+                              sumofNonQC = sum(nonQC),
+                              sumofA = sum(A),
+                              sumofB = sum(B),
+                              sumofC = sum(C)) %>%
+                      mutate(pctQC = (sumofQC/grp_count),
+                           pctQCtononQC = (sumofQC/sumofNonQC),
+                           pctA = (sumofA / grp_count),
+                           pctB = (sumofB / grp_count),
+                           pctC = (sumofC / grp_count))
+            
+prelim_grade_actgrp_char <- pct_QC_actgrp_char %>%
+  mutate(prelim_dql = case_when(pctQCtononQC < 0.1 ~ paste0("QC ", as.integer(pctQCtononQC*100),"%"),
+                                pctA == 1 ~ "A", #100% QC samples = A assign A
+                                pctB == 1 ~ "B", #100% QC samples = B assign B
+                                pctC == 1 ~ "C")) #100% QC samples = C assign C
+                                
+                      
+                             
+                             ifelse(Count_of_sub_QC > 5 & subpctA + subpctB == 1 & subpctA >= 0.90, "B", "E"), 
+                      ifelse(pctA < 1 | pctB < 1 | pctC < 1 | pctE < 1, "Mixed", #if grades are mixed, assign mixed
+                                                                "not yet graded"))))))) %>% #Should never be "not yet graded" 
+  select(actgrp_char, sub_char, prelim_dql)  #pare down table to make more manageable 
 
-#QC grades per sub, used for deault method
-QAQC_grades_per_sub <-  prec_grade%>%
-  mutate(A = ifelse(prec_DQL == 'A', 1, 0)) %>%
-  mutate(B = ifelse(prec_DQL == 'B', 1, 0)) %>%
-  mutate(C = ifelse(prec_DQL== 'C', 1, 0)) %>%
-  mutate(E = ifelse(prec_DQL == 'E', 1, 0)) %>%
-  group_by(sub_char) %>%
-  summarize(countofQAQC = n(),
-    sumofA = sum(A),
-    sumofB = sum(B),
-    sumofC = sum(C),
-    sumofE = sum(E)) %>%
-  mutate(subpctA = (sumofA / countofQAQC),
-    subpctB = (sumofB / countofQAQC),
-    subpctC = (sumofC / countofQAQC),
-    subpctE = (sumofE / countofQAQC)) %>%
-  select(sub_char, countofQAQC, subpctA, subpctB, subpctC, subpctE)
+mixed <- grade_Act_grp_prelim_grade %>%
+  filter(prelim_dql == "Mixed")
 
-# count number of duplicates per submission ID
-QAQC_num_dup_by_sub <- res %>%
-  mutate(Count_of_sub_Q = if_else(sample_type == "dup", 1, 0)) %>%
-  group_by(sub_char) %>%
-  summarise(Count_of_sub_QC = sum(Count_of_sub_Q))
+#Push act_grp prelim DQLs to results
+grade_res_prelim_DQL <- res %>%
+  select(LASAR,DateTime,subid,act_type,TypeIDText,TypeShortName,Date4Id,Date4group,act_id,
+         act_group,CharIDText,result_id,sub_char,actgrp_char,Result) %>%
+  full_join(grade_Act_grp_prelim_grade, by = "actgrp_char")
 
-#Table for number of QAQC Samples Per activity group
-QAQC_num_dup_by_act_grp <- res %>%
-  mutate(Count_of_act_Q = if_else(sample_type == "dup", 1, 0),
-         Count_of_act_non_Q = if_else(sample_type == "dup", 0, 1)) %>%
-  group_by(actgrp_char, sub_char) %>%
-  summarise(Count_of_act_QC = sum(Count_of_act_Q),
-            Count_of_act_noQC = sum(Count_of_act_non_Q)) %>%
-  full_join(QAQC_num_dup_by_sub, by = "sub_char")
 
 #Combine number of QAQC samples with precision grades
 Act_grp_char_QAQC <- QAQC_num_dup_by_act_grp %>%
@@ -92,7 +100,7 @@ Act_grp_char_QAQC <- QAQC_num_dup_by_act_grp %>%
   replace(is.na(.), 0)
 
 
-#### generate a table of anomolies for each result ####
+#### generate a table of anomolies for each result #### 
 sub_char_precen <- res %>%
                 group_by(CharIDText) %>% 
                 summarise(percen_5th = quantile(Result, probs = .05),
@@ -134,7 +142,6 @@ anom <- res %>%
 #### Grading####
 #assign preliminary DQLs to an Activity group characteristic
 
-#assign preliminary DQLs to an Activity group characteristic
 grade_Act_grp_prelim_grade <- Act_grp_char_QAQC %>%
   mutate(prelim_dql = ifelse(Count_of_act_QC / Count_of_act_noQC < 0.1, paste0("QC ", as.integer((Count_of_act_QC / Count_of_act_noQC)*100),"%"),
                       ifelse(pctA == 1, "A", #100% QC samples = A assign A
@@ -153,7 +160,10 @@ mixed <- grade_Act_grp_prelim_grade %>%
   filter(prelim_dql == "Mixed")
 
 #Push act_grp prelim DQLs to results
-grade_res_prelim_DQL <- full_join(res, grade_Act_grp_prelim_grade, by = "actgrp_char")
+grade_res_prelim_DQL <- res %>%
+                        select(LASAR,DateTime,subid,act_type,TypeIDText,TypeShortName,Date4Id,Date4group,act_id,
+                        act_group,CharIDText,result_id,sub_char,actgrp_char,Result) %>%
+                        full_join(grade_Act_grp_prelim_grade, by = "actgrp_char")
 
 
 #pull out results with mixed grades
@@ -170,9 +180,9 @@ Grade_mixed_QC <- grade_res_prelim_DQL %>%
 #Grade_mixed_QC$StartDateTime = as.POSIXct(Grade_mixed_QC$StartDateTime, format = "%m/%d/%Y")
 #grade_mixed_res_prelim_dql$StartDateTime = as.POSIXct(grade_mixed_res_prelim_dql$StartDateTime, format = "%m/%d/%Y")
 
-QC_Mod <- Grade_mixed_QC %>%
+QC_Mod <- prec_grade %>%
   group_by(actgrp_char) %>%  
-  mutate(groupposition = 1:n(), #this won't run
+  mutate(groupposition = 1:n(),#this won't run if there are no mixed results
          IsMaxDate = ifelse(DateTime == max(DateTime),1,0),
          MaXDate = max(DateTime)) %>%
   mutate(ApplicableAfter =if_else(prec_DQL > lead(prec_DQL, n = 1) & groupposition == 1, DateTime,
@@ -186,9 +196,9 @@ QC_Mod <- Grade_mixed_QC %>%
   mutate(Mod_DEQ_PREC = max(prec_DQL)) %>%
   as.data.frame()
 
-QCmodtest <- QC_Mod %>%
-  filter(actgrp_char == "0050-20130813-ec") %>%
-  select(ResultID, StartDateTime, DEQ_PREC,IsMaxDate, ApplicableAfter, MaXDate, Mod_DEQ_PREC, groupposition )
+# QCmodtest <- QC_Mod %>%
+#   filter(actgrp_char == "0050-20130813-ec") %>%
+#   select(ResultID, StartDateTime, DEQ_PREC,IsMaxDate, ApplicableAfter, MaXDate, Mod_DEQ_PREC, groupposition )
 
 # Join the data.frames to find DQL value
 # I don't know how this works. I pulled it off the internet
@@ -196,42 +206,35 @@ QCmodtest <- QC_Mod %>%
 
 grade_mixed_result <-
   sqldf(
-    "SELECT grade_mixed_res_prelim_dql.actgrp_char, grade_mixed_res_prelim_dql.ResultID, 
-            grade_mixed_res_prelim_dql.Result,  grade_mixed_res_prelim_dql.StartDateTime ,
-            QC_Mod.DEQ_PREC as prelim_dql
+    "SELECT grade_mixed_res_prelim_dql.actgrp_char, grade_mixed_res_prelim_dql.result_id, 
+            grade_mixed_res_prelim_dql.Result,  grade_mixed_res_prelim_dql.DateTime ,
+            QC_Mod.prec_DQL as prelim_dql
     FROM grade_mixed_res_prelim_dql, QC_Mod
     WHERE grade_mixed_res_prelim_dql.actgrp_char == QC_Mod.actgrp_char AND
-    (
-    (grade_mixed_res_prelim_dql.StartDateTime <= QC_Mod.StartDateTime AND QC_Mod.groupposition == 1) 
+    ( 
+    (grade_mixed_res_prelim_dql.DateTime <= QC_Mod.DateTime AND QC_Mod.groupposition == 1) 
        OR
-           (grade_mixed_res_prelim_dql.StartDateTime <= QC_Mod.StartDateTime AND QC_Mod.ApplicableAfter IS NULL) 
+           (grade_mixed_res_prelim_dql.DateTime <= QC_Mod.DateTime AND QC_Mod.ApplicableAfter IS NULL) 
        OR
-          (QC_Mod.ApplicableAfter IS NOT NULL AND grade_mixed_res_prelim_dql.StartDateTime > QC_Mod.ApplicableAfter) 
+          (QC_Mod.ApplicableAfter IS NOT NULL AND grade_mixed_res_prelim_dql.DateTime > QC_Mod.ApplicableAfter) 
        OR
-    (grade_mixed_res_prelim_dql.StartDateTime > QC_Mod.StartDateTime AND QC_Mod.IsMaxDate == 1)
+    (grade_mixed_res_prelim_dql.DateTime > QC_Mod.DateTime AND QC_Mod.IsMaxDate == 1)
     )"
   )
 
-#######
-######
-#####
-####
-###
-## 
+ 
 # below is the prelim grade table
-
-
 #merge mixed reults back into table
-grade_prelim_DQL <- merge(grade_res_prelim_DQL, grade_mixed_result, by = "ResultID", all.x = T ) %>%
+grade_prelim_DQL <- merge(grade_res_prelim_DQL, grade_mixed_result, by = "result_id", all.x = T ) %>%
   #if grade is mixed, assign new spread out grade, else use original grade
-  mutate(prelim_DQL = ifelse(!is.na(prelim_dql.y), prelim_dql.y, prelim_dql.x)) %>% 
+  mutate(Auto_DQL = ifelse(!is.na(prelim_dql.y), prelim_dql.y, prelim_dql.x)) %>% 
   #If result is a QC sample, use the grade from QC sample. Some days have more than 1 QC sample 
   #and grade_mixed_result assigns lowest grade for the day. This ensures QC results retain
   #original grade 
-  mutate(prelim_DQL = ifelse(DEQ_PREC == "" | is.na(DEQ_PREC), prelim_DQL, DEQ_PREC)) %>%
+  mutate(Auto_DQL = ifelse(prelim_dql.x == "" | is.na(prelim_dql.x), Auto_DQ, prelim_dql.x)) %>%
   #below here is just cleanup from the merge process
   mutate(Result = Result.x) %>%
-  mutate(StartDateTime = StartDateTime.x) %>%
+  mutate(DateTime = DateTime.x) %>%
   mutate(actgrp_char = actgrp_char.x) %>%
   mutate(sub_char = sub_char.x) %>%
   select(
@@ -241,14 +244,12 @@ grade_prelim_DQL <- merge(grade_res_prelim_DQL, grade_mixed_result, by = "Result
     -actgrp_char.y,
     -prelim_dql.x,
     -prelim_dql.y,
-    -StartDateTime.x,
-    -StartDateTime.y,
+    -DateTime.x,
+    -DateTime.y,
     -sub_char.x,
     -sub_char.y
   ) %>%
-  mutate(resactgrp = paste(ResultID, actgrp_char, sep = "-"))
+  mutate(resactgrp = paste(result_id, actgrp_char, sep = "-")) #%>%
+  #distinct()
 
-test <- grade_prelim_DQL %>%
-  filter(grepl("0050-",ResultID),
-         CharID == "ec") %>%
-  arrange(CharID, StartDateTime)
+
