@@ -36,7 +36,7 @@ data <- data %>% mutate(row_ID = 1:n())
           
 #project <- read_excel("E:/DEQVOLMON_Grab/TestingData/Test_SubID0026/pbwc20154r.xlsx", sheet = "ProjectInfo", skip =5) 
 project <- read_excel("E:/DEQVOLMON_Grab/TestingData/Test_SubId0224/Test0224SdcwcGrab_4r.xlsx", sheet = "Project_Info", skip =5) 
-sub_id <- 224
+sub_id <- 224.5
 
 ### restructure the data template ####
 ### currently does not include the columns ending with, _PREC, _ACC, _DQL
