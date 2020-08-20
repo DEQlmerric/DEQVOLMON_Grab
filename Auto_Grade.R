@@ -12,42 +12,54 @@ library(sqldf)
 options('scipen' = 50, stringsAsFactors = FALSE)
 
 ### Connect to VolMon DB 
-VM2.sql <- odbcConnect("VolMon2") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
-QCcrit <- sqlFetch(VM2.sql,"dbo.tlu_Qccrit") %>% select(-UnitID,-Units,-Source,-RcharAlias)
-chars <- sqlFetch(VM2.sql,"dbo.tlu_Characteristic")
-anom_crit <- sqlFetch(VM2.sql,"dbo.tlu_AnomCrit")
-type <- sqlFetch(VM2.sql,"dbo.tlu_Type")
-odbcClose(VM2.sql)
+#VM2.sql <- odbcConnect("VolMon2") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
+VM2T.sql <- odbcConnect("VolMon_testload") ### remove test database
+QCcrit <- sqlFetch(VM2T.sql,"dbo.tlu_Qccrit") %>%  ### this cleans up the QC table to use onl one method the low level swwitch to a AbsDiff is handled later
+                  group_by(charidText) %>%
+                  mutate(multi = ifelse(n() > 1, 1, 0),
+                         use = ifelse(multi == 1 & QCcalc == "AbsDiff", 'No','Yes')) %>%
+                  filter(use == 'Yes') %>%
+                  select(-UnitID,-Units,-Source,-RcharAlias,-multi,-use)
+  chars <- sqlFetch(VM2T.sql,"dbo.tlu_Characteristic")
+anom_crit <- sqlFetch(VM2T.sql,"dbo.tlu_AnomCrit")
+type <- sqlFetch(VM2T.sql,"dbo.tlu_Type")
+odbcClose(VM2T.sql)
 
  #### Precision Checks & QC summaries ####
 prec_grade <- res %>% 
         left_join(chars, by = 'CharIDText') %>% 
-        left_join(QCcrit, by = c('CharID'= 'charid','CharIDText'='charidText')) %>% # something funning with do charid= 9 in this table 
+        left_join(QCcrit, by = c('CharID'= 'charid','CharIDText'='charidText')) %>% # something funny with do charid= 9 in this table 
+        mutate(use_QCcalc = ifelse(Result < 'Low Level QC limit'& !is.na('Low Level QC limit') & !CharIDText == 'sc',"AbsDiff",QCcalc)) %>% #this changes RPD to absolute difference for low values 
         group_by(row_ID,CharIDText) %>% 
         mutate(Dup = ifelse(n() > 1, 1, 0)) %>%
         ungroup() %>% 
         filter(Dup == 1) %>% 
-        select(row_ID,LASAR,DateTime,Char,CharIDText,actgrp_char,sub_char,sample_type,Result,result_id,QCcalc,DQLA,DQLB) %>%
+        select(row_ID,LASAR_ID,DateTime,Char,CharIDText,actgrp_char,sub_char,sample_type,Result,result_id,use_QCcalc,DQLA,DQLB
+               ,'Limit of Quantitation') %>%
+        rename(LOQ = 'Limit of Quantitation') %>%
         group_by(row_ID,CharIDText) %>%
         arrange(desc(sample_type), .by_group = TRUE) %>%
-        mutate(prec_val = case_when(QCcalc == "LogDiff" ~
+        mutate(prec_val = case_when(use_QCcalc == "LogDiff" ~
                                     log10(Result) - log10(lag(Result, default = first(Result))),
-                                    QCcalc == "AbsDiff" ~ abs(Result - lag(Result, default = first(Result))),
-                                    QCcalc == "RPD" ~ 
-                                    abs((Result - lag(Result, default = first(Result)))/mean(Result)))) %>%
-        mutate(prec_DQL = case_when(prec_val <= DQLA ~ "A",
-                                    prec_val > DQLA & prec_val <= DQLB ~ "B",
+                                    use_QCcalc == "AbsDiff" ~ abs(Result - lag(Result, default = first(Result))),
+                                    use_QCcalc == "RPD" ~ 
+                                    abs((Result - lag(Result, default = first(Result)))/mean(Result))),
+               use_DQLA = as.numeric(ifelse(use_QCcalc == "AbsDiff" & DQLA < LOQ, LOQ ,DQLA)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation
+               use_DQLB = as.numeric(ifelse(use_QCcalc == "AbsDiff" & DQLB < LOQ, LOQ*2,DQLB)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation
+               prec_DQL = case_when(prec_val <= use_DQLA ~ "A", 
+                                    prec_val > use_DQLA & prec_val <= use_DQLB ~ "B",
                                     TRUE ~ "C")) %>%
         filter(sample_type == 'dup') %>%
-        select(row_ID,CharIDText,result_id,prec_val,prec_DQL)
+        select(row_ID,CharIDText,result_id,use_QCcalc,prec_val,use_DQLA,use_DQLB,prec_DQL)
 
 # add prec grade to result 
 res_prec_grade <- res %>% left_join(prec_grade, by = c('row_ID','result_id','CharIDText')) 
 
 
+
 ## calculate the %QC and %DQL 
 Prelim_DQL_AG_char <- res_prec_grade %>% 
-                      select(row_ID,LASAR,DateTime,subid,act_type,sample_type,TypeIDText,TypeShortName,Date4Id,Date4group,act_id,
+                      select(row_ID,LASAR_ID,DateTime,subid,act_type,sample_type,TypeIDText,TypeShortName,Date4Id,Date4group,act_id,
                       act_group,CharIDText,result_id,sub_char,actgrp_char,Result,prec_val,prec_DQL) %>%
                       mutate(A = ifelse(prec_DQL %in% 'A',1,0),
                              B = ifelse(prec_DQL %in%  'B',1,0),
@@ -75,7 +87,8 @@ Prelim_DQL_AG_char <- res_prec_grade %>%
 # Spread the Prelim grades to activity groups that don't have mixed DQLs  
 Prelim_DQL_nonMixed <- res %>% 
   left_join(Prelim_DQL_AG_char, by = 'actgrp_char') %>%
-  filter(!prelim_dql == 'Mixed')
+  filter(!prelim_dql == 'Mixed') %>%
+  #%>% select(LASAR_ID,CharIDText,act_id,act_group,result_id,actgrp_char,prelim_dql)
 
 # Spread the Prelim grades to the results to mixed results 
 Prelim_DQL_Mixed <- res %>% 
@@ -85,7 +98,12 @@ Prelim_DQL_Mixed <- res %>%
 
 Grade_mixed_QC <- Prelim_DQL_Mixed  %>%
   left_join(prec_grade, by = c('row_ID','result_id','CharIDText')) %>%
-  filter(sample_type == 'dup') %>%
+  group_by(row_ID,CharIDText) %>%
+  arrange(desc(sample_type), .by_group = TRUE) %>%
+  #mutate(prelim_dql = ifelse(sample_type == 'dup' & !is.na(prec_DQL),prec_DQL,prelim_dql)) %>%
+                                
+  select(LASAR_ID,CharIDText,act_id,act_group,result_id,actgrp_char,sample_type,prec_DQL,prelim_dql) %>%
+  
   arrange(actgrp_char) 
  
 
@@ -138,7 +156,7 @@ sub_char_precen <- Prelim_DQL_All %>%
                           percen_90th = quantile(Result, probs = .90),
                           percen_95th = quantile(Result, probs = .95))
 station_char_percen <- Prelim_DQL_All%>%
-                       group_by(LASAR, CharIDText) %>% 
+                       group_by(LASAR_ID, CharIDText) %>% 
                        summarise(S_percen_5th = quantile(Result, probs = .05), 
                        S_percen_95th = quantile(Result, probs = .95))
                 
