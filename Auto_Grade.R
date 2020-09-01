@@ -6,7 +6,7 @@ library(tidyverse)
 library(odbc)
 library(readxl)
 library(data.table)
-library(sqldf)
+library(fuzzyjoin)
 
 #This prevents scientific notation from being used and forces all imported fields to be character or numeric
 options('scipen' = 50, stringsAsFactors = FALSE)
@@ -87,7 +87,7 @@ Prelim_DQL_AG_char <- res_prec_grade %>%
 # Spread the Prelim grades to activity groups that don't have mixed DQLs  
 Prelim_DQL_nonMixed <- res %>% 
   left_join(Prelim_DQL_AG_char, by = 'actgrp_char') %>%
-  filter(!prelim_dql == 'Mixed') %>%
+  filter(!prelim_dql == 'Mixed')# %>%
   #%>% select(LASAR_ID,CharIDText,act_id,act_group,result_id,actgrp_char,prelim_dql)
 
 # Spread the Prelim grades to the results to mixed results 
@@ -102,49 +102,59 @@ Grade_mixed_QC <- Prelim_DQL_Mixed  %>%
   arrange(desc(sample_type), .by_group = TRUE) %>%
   #mutate(prelim_dql = ifelse(sample_type == 'dup' & !is.na(prec_DQL),prec_DQL,prelim_dql)) %>%
                                 
-  select(LASAR_ID,CharIDText,act_id,act_group,result_id,actgrp_char,sample_type,prec_DQL,prelim_dql) %>%
+  select(LASAR_ID,CharIDText,act_id,act_group,result_id,actgrp_char,sample_type,prec_DQL,prelim_dql, DateTime) %>%
   
-  arrange(actgrp_char) 
+  arrange(actgrp_char) %>%
+  filter(sample_type == "dup")
  
 
-QC_Mod <- Grade_mixed_QC %>%
-  group_by(actgrp_char) %>%
-  mutate(groupposition = 1:n(),
-         IsMaxDate = ifelse(DateTime == max(DateTime),1,0),
-         MaXDate = max(DateTime)) %>%
-  mutate(ApplicableAfter =if_else(prec_DQL > lead(prec_DQL, n = 1) & groupposition == 1, DateTime,
-                                  if_else(prec_DQL > lag(prec_DQL, n = 1), lag(DateTime),
-                                          if_else(prec_DQL > lead(prec_DQL, n = 1), DateTime, 
-                                                  if_else(DateTime == MaXDate, DateTime, DateTime + 100))))) %>%
+
+# This bit figures out when the DQLs apply
+# This sets the start and end dates for when the QC applies. 
+# Done by actgrp_char group
+  # if first QC in group, set start of that grade's applicability 1 year earlier
+    #this makes sure results from before this QC get assigned first QC grade
+      #adjust if needed
+# when parsing out the below case_when statement, remember that in R, A < B. 
+
+
+QC_applicability <- Grade_mixed_QC %>%
   ungroup() %>%
-  as.data.frame()
+  group_by(actgrp_char) %>%
+  # mutate(groupposition = 1:n(),
+  #        IsMaxDate = ifelse(DateTime == max(DateTime),1,0),
+  #        MaXDate = max(DateTime)) %>%
+  arrange(actgrp_char, DateTime) %>%
+  mutate(ApplicableStart = case_when(DateTime == min(DateTime) ~ DateTime - years(1),
+                                     prec_DQL < lag(prec_DQL, n = 1) ~ DateTime,
+                                     prec_DQL > lag(prec_DQL, n = 1) ~ lag(DateTime) + seconds(2),
+                                     prec_DQL == lag(prec_DQL, n = 1) ~ DateTime,
+                                     TRUE ~ DateTime + years(1000)
+                                     ) ,
+         ApplicableEnd = case_when(DateTime == max(DateTime) ~ DateTime + years(1),
+                                   prec_DQL < lead(prec_DQL, n = 1) ~ DateTime + seconds(1),
+                                   prec_DQL > lead(prec_DQL, n = 1) ~ lead(DateTime) - seconds(1),
+                                   prec_DQL == lead(prec_DQL, n = 1) ~ lead(DateTime) - seconds(1),
+                                   TRUE ~ DateTime + years(1000)
+                                   )
+           ) %>%
+  ungroup() %>%
+  select(actgrp_char,prec_DQL,ApplicableStart, ApplicableEnd )
 
 
-# Join the data.frames to find DQL value
-# I don't know how this works. I pulled it off the internet
-# This should perform "grade spreading"
+#join the WC dataframe to results dataframe to find DQL value
+# fuzzy_left_join will join between dates
+
+grade_mixed_result <- Prelim_DQL_Mixed %>% 
+  fuzzy_left_join(QC_applicability, by = c('actgrp_char' = 'actgrp_char',
+                                           'DateTime' = 'ApplicableStart',
+                                           'DateTime' = 'ApplicableEnd'),
+                  match_fun = c( `==`, `>=`, `<=` )) %>%
+  mutate(prelim_dql = prec_DQL) %>%
+  select(-actgrp_char.y, -ApplicableStart, -ApplicableEnd, -prec_DQL ) %>%
+  rename('actgrp_char' = 'actgrp_char.x') 
   
-grade_mixed_result <-
-    sqldf(
-      "SELECT Prelim_DQL_Mixed.actgrp_char, Prelim_DQL_Mixed.result_id, 
-            Prelim_DQL_Mixed.Result,  Prelim_DQL_Mixed.DateTime ,
-            QC_Mod.prec_DQL as prelim_dql_m
-    FROM Prelim_DQL_Mixed, QC_Mod
-    WHERE Prelim_DQL_Mixed.actgrp_char == QC_Mod.actgrp_char AND
-    (
-    (Prelim_DQL_Mixed.DateTime <= QC_Mod.DateTime AND QC_Mod.groupposition == 1) 
-       OR
-           (Prelim_DQL_Mixed.DateTime <= QC_Mod.DateTime AND QC_Mod.ApplicableAfter IS NULL) 
-       OR
-          (QC_Mod.ApplicableAfter IS NOT NULL AND Prelim_DQL_Mixed.DateTime > QC_Mod.ApplicableAfter) 
-       OR
-    (Prelim_DQL_Mixed.DateTime > QC_Mod.DateTime AND QC_Mod.IsMaxDate == 1)
-    )"
-    ) %>% 
-  select(result_id,prelim_dql_m) %>% 
-  right_join(Prelim_DQL_Mixed, by = 'result_id') %>%
-  mutate(prelim_dql = if_else(prelim_dql== 'Mixed',prelim_dql_m,prelim_dql)) %>%
-  select(-prelim_dql_m) 
+
 
 Prelim_DQL_All <- rbind(Prelim_DQL_nonMixed,grade_mixed_result)
 
@@ -161,10 +171,11 @@ station_char_percen <- Prelim_DQL_All%>%
                        S_percen_95th = quantile(Result, probs = .95))
                 
 anom <- Prelim_DQL_All %>% 
+  rename(LOQ = 'Limit of Quantitation') %>%
         left_join(anom_crit, by = c('CharIDText' = 'charidText')) %>%
         left_join(sub_char_precen, by= 'CharIDText') %>%
-        left_join(station_char_percen, by= c('LASAR','CharIDText')) %>%
-        select(LASAR,DateTime,CharIDText,subid,TypeIDText,Result,act_id,act_group,result_id,AnomCritID,charid,LOQ,RealRngL,RealRngU,
+        left_join(station_char_percen, by= c('LASAR_ID','CharIDText')) %>%
+        select(LASAR_ID,DateTime,CharIDText,subid,TypeIDText,Result,act_id,act_group,result_id,AnomCritID,charid,LOQ,RealRngL,RealRngU,
                amb01L,amb05L,amb95U,amb99U,stdL,stdU,stdLlp,stdUlp,percen_5th,percen_10th,percen_90th,percen_95th,
                S_percen_5th,S_percen_95th) %>%
         mutate(expected_range = ifelse(Result > RealRngU | Result < RealRngL,"OutOfRange",NA),
@@ -182,7 +193,7 @@ anom <- Prelim_DQL_All %>%
                station_5 = ifelse(Result < S_percen_5th,"Lowest5%SubmStnValues",NA),
                station_95 = ifelse(Result > S_percen_95th,"Highest95%SubmStnValues",NA)) %>%
                #QC_mismatch = ifelse(OG_PREC == prelim_dql, NA, "OrgandDEQPrecDQLDifferent")) 
-        gather(key = "Anom_type", value = "Anom",-c(LASAR,DateTime,CharIDText,subid,TypeIDText,
+        gather(key = "Anom_type", value = "Anom",-c(LASAR_ID,DateTime,CharIDText,subid,TypeIDText,
                                                     Result,act_id,act_group,result_id,AnomCritID,charid,LOQ,RealRngL,RealRngU,
                                                     amb01L,amb05L,amb95U,amb99U,stdL,stdU,stdLlp,stdUlp,percen_5th,percen_10th,
                                                     percen_90th,percen_95th,S_percen_5th,S_percen_95th)) %>%
