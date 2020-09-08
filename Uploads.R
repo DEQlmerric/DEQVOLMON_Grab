@@ -51,7 +51,7 @@ QC_actgroup <- sqlQuery(VM2T.sql, qryAGt)
 
 #### t_Activity ####
 act <- final_DQL %>% 
-       select(act_id,act_type,subid,LASAR,DateTime,SubOrganizationID,
+       select(act_id,act_type,subid,LASAR_ID,DateTime,SubOrganizationID,
               samplers,SampleDepth,SampleDepthUnit,DEQ_Comment,Org_Comment) %>% 
        left_join(stations, by = c('LASAR' = 'STATION_KEY')) %>%
        left_join(context, by = c('OrgID'= 'CntextIdText')) %>%
@@ -67,14 +67,14 @@ act <- final_DQL %>%
               SmplColEquip = NA,
               SmplEquipID = NA,
               SmplColEquipComment = NA) %>%
-       select(act_id,act_type,subid,LASAR,ContextID,StationDes,DateTime,StartDateTimeZoneID,
+       select(act_id,act_type,subid,LASAR_ID,ContextID,StationDes,DateTime,StartDateTimeZoneID,
          EndDateTime,EndDateTimeZoneID,MediaID,SubOrganizationID,SmplColMthdID,SmplColEquip,
          SmplEquipID,SmplColEquipComment,SampleDepth,SmplDepthUnitID,Org_Comment,DEQ_Comment,samplers) %>%  
-       rename(ActivityIDText = act_id, ActivityTypeId =act_type,SubID = subid,SiteID = LASAR,
+       rename(ActivityIDText = act_id, ActivityTypeId =act_type,SubID = subid,SiteID = LASAR_ID,
               SiteContextID = ContextID, SiteDescription = StationDes, StartDateTime = DateTime,
               ActivityOrgID = SubOrganizationID,SmplDepth =SampleDepth, Samplers = samplers) %>%
        distinct()
-       as.character(act$SiteID)
+act$SiteID <- as.character(act$SiteID)
 
 #### Interact with the database ###
 #build a vector string of ActivityIDTexts for use in SQL query
@@ -122,12 +122,12 @@ method <- sqlFetch(VM2T.sql, "dbo.tlu_Method")
 
       
 res_t <- final_DQL  %>% 
-       select(result_id,act_id,LASAR,CharIDText,Result,RsltQual,MethodShortName,MethodSpeciation,UNITS,
+       select(result_id,act_id,LASAR_ID,CharIDText,Result,RsltQual,'Method Short Name','Method Speciation',UNITS,
               LOQ,FieldOrLab,Res_comment,OG_ACC,OG_PREC,OG_DQL,final_DQL) %>%
        left_join(chars, by = 'CharIDText') %>%
        left_join(units, by = c('UNITS' = 'UnitIdText')) %>%
-       left_join(method, by = c('MethodShortName' = 'ShortName')) %>%
-       left_join(activity, by = c('act_id' = 'ActivityIDText','LASAR' = 'SiteID')) %>%
+       left_join(method, by = c('Method Short Name' = 'ShortName')) %>%
+       left_join(activity, by = c('act_id' = 'ActivityIDText','LASAR_ID' = 'SiteID')) %>%
        mutate(RsltTypID = 19, # have to account for nondetect in ?
               AnalyticalLaboratoryID = NA,  # will these be in the template if FieldOrLab = lab?
               AnalyticalStartTime = NA,
@@ -143,7 +143,7 @@ res_t <- final_DQL  %>%
               DEQ_RsltComment = NA) %>%
        left_join(prec_grade, by = 'result_id') %>%
        mutate(RsltStatusID = 7) %>%  # all data goes in as Prelim?
-       select(result_id,ActivityID,CharID,Result,RsltQual,UnitID,MethodID,MethodSpeciation,RsltTypID, 
+       select(result_id,ActivityID,CharID,Result,RsltQual,UnitID,MethodID,'Method Speciation',RsltTypID, 
               AnalyticalLaboratoryID,AnalyticalStartTime,AnalyticalStartTimeZoneID,AnalyticalEndTime,
               AnalyticalEndTimeZoneID,LabCommentCode,LOQ,LOQ_UnitID,OG_ACC,OG_PREC,OG_DQL,DEQ_ACC,prec_DQL,
               BiasValue, prec_val,final_DQL,StatisticalBasisID,RsltTimeBasisID,StoretUniqueID,Res_comment,

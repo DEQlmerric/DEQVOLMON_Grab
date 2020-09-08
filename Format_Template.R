@@ -32,7 +32,8 @@ data <- data %>% mutate(row_ID = 1:n()) %>%
 
           
 #project <- read_excel("E:/DEQVOLMON_Grab/TestingData/Test_SubID0026/pbwc20154r.xlsx", sheet = "ProjectInfo", skip =5) 
-project <- read_excel("//deqlab1/Vol_Data/Powder/2018/OriginalCopy_2018_VolWQGrabDataSub_PBWC_4R.xlsx", sheet = "ProjectInfo", skip =5) 
+project <- read_excel("//deqlab1/Vol_Data/Powder/2018/OriginalCopy_2018_VolWQGrabDataSub_PBWC_4R.xlsx", sheet = "ProjectInfo", skip =5) %>%
+           rename(LOQ = 'Limit of Quantitation', Low_QC = 'Low Level QC limit')
 sub_id <- 253
 
 ### restructure the data template ####
@@ -89,16 +90,19 @@ res <- data %>%
        left_join(act_comments, by = 'row_ID') %>%
        left_join(project, by = c('CharIDText'='CharID')) %>% # I had to update template
        mutate(subid = sub_id,
-              act_type = case_when(sample_type == "dup" & FieldOrLab %like% 'Field'~ 313, ##what does this leave out? - I had to update this column name too 
+              act_type = case_when(sample_type == "dup" & FieldOrLab %like% 'Field'~ 158, 
                                    sample_type == "sample" & FieldOrLab %like% 'Field'~ 149,
                                    sample_type == "dup" & FieldOrLab %like% 'Lab'~ 313,
-                                   sample_type == "sample" & FieldOrLab %like% 'Lab'~ 233)) %>%
+                                   sample_type == "sample" & FieldOrLab %like% 'Lab'~ 233)) %>%  #I looked over all values in this field in the VolMon DB. I think this should cover it. 
        left_join(type, by = c('act_type' = 'TypeID')) %>%# this doesn't call out field primaries 
        left_join(sub, by = c('subid' = 'SubID')) %>%
        mutate(Date4Id = strftime(DateTime, format = '%Y%m%d%H%M', tz = 'UTC'), 
               Date4group = strftime(DateTime, format = '%Y%m%d', tz = 'UTC'), 
               act_id = paste(subid,Date4Id,LASAR_ID,TypeIDText,sep = "-"), # fix date format
-              act_group = paste(subid,Date4group,sep = "-"), # add samplers for other batch type?? - how will this be entered in? # add an if statement for batchdupkey
+              act_group = case_when(DupBatchType == 449  ~ paste(subid,Date4group,samplers,sep = "-"), # Duplicates are done once a day by a sampling crew- multiple crews on one day
+                                    DupBatchType == 450  ~ paste(subid,samplers,sep = "-"),# Duplicates done by a sampler at regular frequency, but not daily
+                                    DupBatchType == 448 ~ paste(subid,Date4group,sep = "-"), # Duplicates batches are once a day without additional groupings
+                                    TRUE ~ 'ERROR'), # Duplicates batches are once a day without additional groupings
               result_id = paste(act_id,CharIDText,sep = "-"),
               sub_char = paste(sub_id, CharIDText, sep = "-"),
               actgrp_char = paste(act_group, CharIDText, sep = "-")) 
@@ -107,6 +111,10 @@ res <- data %>%
 #### QC checks for char and duplicates#### 
 ### should error be corrected in the 4r file? 
 
+### batching error 
+bad_batch <- res %>%
+             filter(act_group == 'ERROR')
+   
 # check for results that are duplicates (same location, sample date/time, QC type, and results)
 dup_results <-res %>% 
               group_by(row_ID,LASAR_ID,DateTime,CharIDText,sample_type,Result) %>% 
