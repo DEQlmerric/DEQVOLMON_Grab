@@ -3,10 +3,11 @@
 ## Rewrite of scripts originally written by Steve Hanson
 
 library(tidyverse)
-library(odbc)
+library(odbc) # is this the right package?  it did not suppor the odbcConnect function.
 library(readxl)
 library(data.table)
 library(fuzzyjoin)
+library(RODBC) # think this is the package neeeded to run odbcConnect
 
 #This prevents scientific notation from being used and forces all imported fields to be character or numeric
 options('scipen' = 50, stringsAsFactors = FALSE)
@@ -32,10 +33,11 @@ QC_calc_M <- res %>%
   filter(sample_type == 'sample') %>%
   group_by(row_ID,CharIDText) %>% 
   mutate(n = n(),
-         USE = case_when(n>1 & Result < Low_QC & QCcalc == 'RPD' ~ 0,
+         USE = case_when(n>1 & Result < Low_QC & QCcalc == 'RPD' ~ 0, # is this wehre it is supposed to deal with dups below teh low leve cut off.. it doesn't do what I expected.
                          n>1 & Result > Low_QC & QCcalc == 'AbsDiff' ~ 0,
                          TRUE ~ 1)) %>% 
   filter(USE == 1) %>%
+  #select(row_ID, CharIDText, Low_QC, QCcalc, DQLA, DQLB, LOQ) %>% filter(CharIDText == 'tb')
   select(row_ID,CharIDText,QCcalc,DQLA,DQLB)
 
 
