@@ -3,11 +3,11 @@
 ## Rewrite of scripts originally written by Steve Hanson
 
 library(tidyverse)
-library(odbc) # is this the right package?  it did not suppor the odbcConnect function.
+library(odbc) # is this the right package?  it did not support the odbcConnect function.
 library(readxl)
 library(data.table)
 library(fuzzyjoin)
-library(RODBC) # think this is the package neeeded to run odbcConnect
+library(RODBC) # added by sjh this is the package needed to run odbcConnect
 
 #This prevents scientific notation from being used and forces all imported fields to be character or numeric
 options('scipen' = 50, stringsAsFactors = FALSE)
@@ -15,30 +15,31 @@ options('scipen' = 50, stringsAsFactors = FALSE)
 ### Connect to VolMon DB 
 #VM2.sql <- odbcConnect("VolMon2") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
 VM2T.sql <- odbcConnect("VolMon_testload") ### remove test database
-QCcrit <- sqlFetch(VM2T.sql,"dbo.tlu_Qccrit") %>%  ### this cleans up the QC table to use onl one method the low level swwitch to a AbsDiff is handled later
-                  group_by(charidText) %>%
-                  mutate(multi = ifelse(n() > 1, 1, 0),
-                         use = ifelse(multi == 1 & QCcalc == "AbsDiff", 'No','Yes')) %>%
-                  filter(use == 'Yes') %>%
-                  select(-UnitID,-Units,-Source,-RcharAlias,-multi,-use)
-chars <- sqlFetch(VM2T.sql,"dbo.tlu_Characteristic")
-anom_crit <- sqlFetch(VM2T.sql,"dbo.tlu_AnomCrit")
-type <- sqlFetch(VM2T.sql,"dbo.tlu_Type")
+QCcrit <- sqlFetch(VM2T.sql,"dbo.tlu_Qccrit")# %>%  ### this cleans up the QC table to use only one method the low level swwitch to a AbsDiff is handled later
+#                  group_by(charidText) %>%
+ #                 mutate(multi = ifelse(n() > 1, 1, 0),
+#                         use = ifelse(multi == 1 & QCcalc == "AbsDiff", 'No','Yes')) %>%
+#                  filter(use == 'Yes') %>% # I'd like this better if it callled this product something other than QCcrit b/c it is filtered
+#                  select(-UnitID,-Units,-Source,-RcharAlias,-multi,-use)
+chars <- sqlFetch(VM2T.sql,"dbo.tlu_Characteristic") #sjh could drop columns 5-7
+anom_crit <- sqlFetch(VM2T.sql,"dbo.tlu_AnomCrit") #sjh..should be converted to tidy table in database see comments
+type <- sqlFetch(VM2T.sql,"dbo.tlu_Type") #sjh could drop columns 5-9
 odbcClose(VM2T.sql)
 
  #### Precision Checks & QC summaries ####
+res$LOQ[is.na(res$LOQ)] <- 0  # sjh remove NA's from LOQ field
 QC_calc_M <- res %>% 
   left_join(chars, by = 'CharIDText') %>% # join char table to get charid
   left_join(QCcrit, by = c('CharID'= 'charid','CharIDText'='charidText')) %>% 
   filter(sample_type == 'sample') %>%
   group_by(row_ID,CharIDText) %>% 
-  mutate(n = n(),
-         USE = case_when(n>1 & Result < Low_QC & QCcalc == 'RPD' ~ 0, # is this wehre it is supposed to deal with dups below teh low leve cut off.. it doesn't do what I expected.
+  mutate(n = n(),  
+         USE = case_when(n>1 & Result < Low_QC & QCcalc == 'RPD' ~ 0, 
                          n>1 & Result > Low_QC & QCcalc == 'AbsDiff' ~ 0,
                          TRUE ~ 1)) %>% 
-  filter(USE == 1) %>%
-  #select(row_ID, CharIDText, Low_QC, QCcalc, DQLA, DQLB, LOQ) %>% filter(CharIDText == 'tb')
-  select(row_ID,CharIDText,QCcalc,DQLA,DQLB)
+  filter(USE == 1) %>% 
+  select(row_ID,CharIDText,QCcalc,DQLA,DQLB,USE) # take out sample_type and Result to avoid duplicate renames (.x & .y) in next step.  may also need to use regular expressions to get rid of .x instead 
+
 
 
 prec_grade <- res %>% 
@@ -53,19 +54,19 @@ prec_grade <- res %>%
         arrange(desc(sample_type), .by_group = TRUE) %>% # arranges the dataset so that the primary is the first value
         mutate(prec_val = case_when(QCcalc == "LogDiff" ~
                                     log10(Result) - log10(lag(Result, default = first(Result))),
-                                    QCcalc == "AbsDiff" ~ abs(Result - lag(Result, default = first(Result))),
+                                    QCcalc == "AbsDiff" ~ abs(Result - lag(Result, default = first(Result))),  # using abs here may mess up the charts and statisitcs.
                                     QCcalc == "RPD" ~ 
                                     abs((Result - lag(Result, default = first(Result)))/mean(Result))),
-               use_DQLA = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLA < LOQ, LOQ ,DQLA)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation
+               use_DQLA = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLA < LOQ, LOQ ,DQLA)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation 
                use_DQLB = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLB < LOQ, LOQ*2,DQLB)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation
                prec_DQL = case_when(prec_val <= use_DQLA ~ "A", 
                                     prec_val > use_DQLA & prec_val <= use_DQLB ~ "B",
                                     TRUE ~ "C")) %>%
         filter(sample_type == 'dup') %>% # filter dup to get the prec_value 
-        select(row_ID,CharIDText,result_id,QCcalc,prec_val,use_DQLA,use_DQLB,prec_DQL)
+        select(row_ID,CharIDText,result_id,QCcalc,prec_val,use_DQLA,use_DQLB,prec_DQL)  # 
 
-# add prec grade to result 
-res_prec_grade <- res %>% left_join(prec_grade, by = c('row_ID','result_id','CharIDText')) #%>%
+# add prec grade to result, 
+res_prec_grade <- res %>% left_join(prec_grade, by = c('row_ID','result_id','CharIDText')) #%>% # This seems to assign DQL to only dup rather than FP and FD
 #select(row_ID,LASAR_ID,DateTime,subid,act_type,sample_type,TypeIDText,TypeShortName,Date4Id,Date4group,act_id,
 #act_group,CharIDText,result_id,sub_char,actgrp_char,Result,use_DQLA,use_DQLB,prec_val,prec_DQL)
 
@@ -76,17 +77,17 @@ Prelim_DQL_AG_char <- res_prec_grade %>%
                       mutate(A = ifelse(prec_DQL %in% 'A',1,0),
                              B = ifelse(prec_DQL %in%  'B',1,0),
                              C = ifelse(prec_DQL %in%  'C', 1, 0),
-                             QC = ifelse(sample_type == 'dup', 1, 0),
+                             QC = ifelse(sample_type == 'dup', 1, 0), # Is this different
                              nonQC = ifelse(sample_type == 'sample', 1, 0)) %>%
-                      group_by(actgrp_char) %>%
+                      group_by(actgrp_char) %>%  # I think with new approach to sampler batches this will work b/c no longer many to many
                       summarize(grp_count = n(),
                               sumofQC = sum(QC),
                               sumofNonQC = sum(nonQC),
                               sumofA = sum(A),
                               sumofB = sum(B),
                               sumofC = sum(C)) %>%
-                      mutate(pctQC = (sumofQC/grp_count),
-                           pctQCtononQC = (sumofQC/sumofNonQC),
+                      mutate(pctQC = (sumofQC/grp_count), # seen
+                           pctQCtononQC = (sumofQC/sumofNonQC), # I'm not sure 
                            pctA = (sumofA / sumofQC),
                            pctB = (sumofB / sumofQC),
                            pctC = (sumofC / sumofQC)) %>%
@@ -158,9 +159,9 @@ QC_applicability <- Grade_mixed_QC %>%
 # fuzzy_left_join will join between dates
 
 grade_mixed_result <- Prelim_DQL_Mixed %>% 
-  fuzzy_left_join(QC_applicability, by = c('actgrp_char' = 'actgrp_char',
-                                           'DateTime' = 'ApplicableStart',
-                                           'DateTime' = 'ApplicableEnd'),
+  fuzzy_left_join(QC_applicability, by = c('actgrp_char' = 'actgrp_char', # ==
+                                           'DateTime' = 'ApplicableStart', # DT >= AS
+                                           'DateTime' = 'ApplicableEnd'), # DT <= AE
                   match_fun = c( `==`, `>=`, `<=` )) %>%
   mutate(prelim_dql = prec_DQL) %>%
   select(-actgrp_char.y, -ApplicableStart, -ApplicableEnd, -prec_DQL ) %>%

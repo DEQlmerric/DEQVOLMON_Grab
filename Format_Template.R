@@ -21,9 +21,10 @@ sub <- sqlFetch(VM2T.sql,"dbo.t_Submission")
 chars <- sqlFetch(VM2T.sql,"dbo.tlu_Characteristic")
 type <- sqlFetch(VM2T.sql,"dbo.tlu_Type")
 odbcClose(VM2T.sql)
-
+sub$DupBatchType[3] <- 450 # added for CRK test dataset
 # bring in dataset - 
-data <-  read_excel("//deqlab1/Vol_Data/Powder/2018/OriginalCopy_2018_VolWQGrabDataSub_PBWC_4R.xlsx", sheet = "data", skip =5) %>% filter(!is.na(LASAR_ID))
+data <-  read_excel("//deqlab1/WQM/Volunteer Monitoring/datamanagement/R/GrabRScriptRewrite/TestingData/Test_CrkSubID003/Crk2009_4r_2TestNewScript.xlsx", 
+                    sheet = "data") %>% filter(!is.na(LASAR_ID)) #"//deqlab1/Vol_Data/Powder/2018/OriginalCopy_2018_VolWQGrabDataSub_PBWC_4R.xlsx" , skip =5
 # add a row ID and formats datatime column
 data <- data %>% mutate(row_ID = 1:n()) %>%
         mutate(StartTime = strftime(StartTime, "%H:%M:%S"),
@@ -32,9 +33,9 @@ data <- data %>% mutate(row_ID = 1:n()) %>%
 
           
 #project <- read_excel("E:/DEQVOLMON_Grab/TestingData/Test_SubID0026/pbwc20154r.xlsx", sheet = "ProjectInfo", skip =5) 
-project <- read_excel("//deqlab1/Vol_Data/Powder/2018/OriginalCopy_2018_VolWQGrabDataSub_PBWC_4R.xlsx", sheet = "ProjectInfo", skip =5) %>%
-           rename(LOQ = 'Limit of Quantitation', Low_QC = 'Low Level QC limit')
-sub_id <- 253
+project <- read_excel("//deqlab1/WQM/Volunteer Monitoring/datamanagement/R/GrabRScriptRewrite/TestingData/Test_CrkSubID003/Crk2009_4r_2TestNewScript.xlsx", sheet = "ProjectInfo", skip =5) %>%
+           rename(LOQ = 'Limit of Quantitation', Low_QC = 'Low Level QC limit') %>% filter(!is.na(CharID))
+sub_id <- 003 #253
 
 ### restructure the data template ####
 #pull out comments first 
@@ -94,7 +95,7 @@ res <- data %>%
                                    sample_type == "sample" & FieldOrLab %like% 'Field'~ 149,
                                    sample_type == "dup" & FieldOrLab %like% 'Lab'~ 313,
                                    sample_type == "sample" & FieldOrLab %like% 'Lab'~ 233)) %>%  #I looked over all values in this field in the VolMon DB. I think this should cover it. 
-       left_join(type, by = c('act_type' = 'TypeID')) %>%# this doesn't call out field primaries 
+       left_join(type, by = c('act_type' = 'TypeID')) %>% 
        left_join(sub, by = c('subid' = 'SubID')) %>%
        mutate(Date4Id = strftime(DateTime, format = '%Y%m%d%H%M', tz = 'UTC'), 
               Date4group = strftime(DateTime, format = '%Y%m%d', tz = 'UTC'), 
@@ -105,25 +106,26 @@ res <- data %>%
                                     TRUE ~ 'ERROR'), # Duplicates batches are once a day without additional groupings
               result_id = paste(act_id,CharIDText,sep = "-"),
               sub_char = paste(sub_id, CharIDText, sep = "-"),
-              actgrp_char = paste(act_group, CharIDText, sep = "-")) 
+              actgrp_char = paste(act_group, CharIDText, sep = "-")) %>%
+   select(-TypeFilter, -LastChangeDate, -DEQuse, -MonitoringLocationRequired, -AnalyticalMethodRequired, -SubRevNarrative, -OriginalDate) #sjh# remove columns that shouldn't be needed
 
 
 #### QC checks for char and duplicates#### 
-### should error be corrected in the 4r file? 
+### should error be corrected in the 4r file? # Not as long as we keep a record of the redundant data that is deleted
 
 ### batching error 
 bad_batch <- res %>%
              filter(act_group == 'ERROR')
    
-# check for results that are duplicates (same location, sample date/time, QC type, and results)
-dup_results <-res %>% 
-              group_by(row_ID,LASAR_ID,DateTime,CharIDText,sample_type,Result) %>% 
+# check for redundant results (same location, sample date/time, QC type, and results)
+dup_results <-res %>% # Can we keep the same name "RedundantResult" here..if these are the same thing we should not need to change names.  If we do change name using "duplicate" is confusing...that is why I used redundant
+              group_by(row_ID,LASAR_ID,DateTime,CharIDText,sample_type,Result) %>% #sjh# this is fewer fields to match before deleting than the old script which deleted when every field but the row ID was a duplicate.  
               mutate(dup_res = ifelse(n() > 1, 1, 0)) %>%
               ungroup() %>% 
               filter(dup_res == 1) 
 
 # check for duplicate location, sample date/time, QC type, with different results 
-dup_dif_result <- res %>% 
+dup_dif_result <- res %>% # can we call this RedundantActRt? # I wonder if these can be flagged with anomalies?
                   group_by(row_ID,LASAR_ID,DateTime,CharIDText,sample_type) %>% 
                   mutate(dup_res = ifelse(n() > 1, 1, 0)) %>%
                   ungroup() %>% 
@@ -133,4 +135,15 @@ dup_dif_result <- res %>%
 name_check <- res %>% 
               left_join(chars, by = 'CharIDText') %>% 
               filter(is.na('CharID'))
-              
+
+
+## STUFF STEVE ADDED
+# may want to have something to see if there are data fields missing from the project info if this becomes automated.
+charsfx <- c("_r", "_qual", "d_r", "d_qual", "_PREC", "_ACC", "_DQL", "_m", "_cmnt") #sjh # all the characteristic suffixes
+AllRsltFlds <- paste0(rep(project$CharID, each = length(charsfx)), charsfx) # Create list of result fields based on characteristic list from project info sheet
+NoPrjDatFlds <- names(data)[-which(names(data) %in% AllRsltFlds)] # identified all the field names from Excel data tab not expected from project info char list
+for (i in charsfx) { # My apologies for the for loop
+    MissingProjectFields <- NoPrjDatFlds[endsWith(NoPrjDatFlds,i)]} # I think this should give a vector of result fields in data worksheet but not defined in project worksheet.
+
+
+            
