@@ -15,27 +15,28 @@ library(data.table)
 ### google search looks like it is related to the use of nvarchar(max) in these tables 
 #VM2.sql <- DBI::dbConnect(odbc::odbc(), "VolMon2") 
 #dbListTables(VM2.sql)
-#VM2.sql <- odbcConnect("VolMon2") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
-VM2T.sql <- odbcConnect("VolMon_testload")
-sub <- sqlFetch(VM2T.sql,"dbo.t_Submission") 
-chars <- sqlFetch(VM2T.sql,"dbo.tlu_Characteristic")
-type <- sqlFetch(VM2T.sql,"dbo.tlu_Type")
-odbcClose(VM2T.sql)
-sub$DupBatchType[3] <- 450 # added for CRK test dataset
+VM2.sql <- odbcConnect("VolMon2") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
+#VM2T.sql <- odbcConnect("VolMon_testload")
+sub <- sqlFetch(VM2.sql,"dbo.t_Submission") 
+chars <- sqlFetch(VM2.sql,"dbo.tlu_Characteristic")
+type <- sqlFetch(VM2.sql,"dbo.tlu_Type")
+odbcClose(VM2.sql)
+# sub$DupBatchType[3] <- 450 # added for CRK test dataset - this should come from submission moving forward
 # bring in dataset - 
-data <-  read_excel("//deqlab1/WQM/Volunteer Monitoring/datamanagement/R/GrabRScriptRewrite/TestingData/Test_CrkSubID003/Crk2009_4r_2TestNewScript.xlsx", 
+data <-  read_excel("//deqlab1/Vol_Data/Powder/2018/OriginalCopy_2018_VolWQGrabDataSub_PBWC_4R.xlsx" , skip =5, 
                     sheet = "data") %>% filter(!is.na(LASAR_ID)) #"//deqlab1/Vol_Data/Powder/2018/OriginalCopy_2018_VolWQGrabDataSub_PBWC_4R.xlsx" , skip =5
 # add a row ID and formats datatime column
-data <- data %>% mutate(row_ID = 1:n()) %>%
-        mutate(StartTime = strftime(StartTime, "%H:%M:%S"),
+data <- data %>% mutate(row_ID = 1:n()) %>% #adds a row number 
+         mutate(StartTime = strftime(StartTime, "%H:%M:%S", tz = "UTC"), #had to add UTC to get the time correct - will this harm anything? 
                DT = paste(StartDate,StartTime),
                DateTime = ymd_hms(DT))
 
+# c1 <- data %>% select(LASAR_ID,MLocID) - delete once final 
           
-#project <- read_excel("E:/DEQVOLMON_Grab/TestingData/Test_SubID0026/pbwc20154r.xlsx", sheet = "ProjectInfo", skip =5) 
-project <- read_excel("//deqlab1/WQM/Volunteer Monitoring/datamanagement/R/GrabRScriptRewrite/TestingData/Test_CrkSubID003/Crk2009_4r_2TestNewScript.xlsx", sheet = "ProjectInfo", skip =5) %>%
+#project <- read_excel("E:/DEQVOLMON_Grab/TestingData/Test_SubID0026/pbwc20154r.xlsx", sheet = "ProjectInfo", skip =5) # "//deqlab1/WQM/Volunteer Monitoring/datamanagement/R/GrabRScriptRewrite/TestingData/Test_CrkSubID003/Crk2009_4r_2TestNewScript.xlsx"
+project <- read_excel("//deqlab1/Vol_Data/Powder/2018/OriginalCopy_2018_VolWQGrabDataSub_PBWC_4R.xlsx", sheet = "ProjectInfo", skip =5) %>%
            rename(LOQ = 'Limit of Quantitation', Low_QC = 'Low Level QC limit') %>% filter(!is.na(CharID))
-sub_id <- 003 #253
+sub_id <- 253 #003 
 
 ### restructure the data template ####
 #pull out comments first 
@@ -97,8 +98,8 @@ res <- data %>%
                                    sample_type == "sample" & FieldOrLab %like% 'Lab'~ 233)) %>%  #I looked over all values in this field in the VolMon DB. I think this should cover it. 
        left_join(type, by = c('act_type' = 'TypeID')) %>% 
        left_join(sub, by = c('subid' = 'SubID')) %>%
-       mutate(Date4Id = strftime(DateTime, format = '%Y%m%d%H%M', tz = 'UTC'), 
-              Date4group = strftime(DateTime, format = '%Y%m%d', tz = 'UTC'), 
+       mutate(Date4Id = strftime(DateTime, format = '%Y%m%d%H%M',tz = 'UTC'), #keeping UTC in these for now
+              Date4group = strftime(DateTime, format = '%Y%m%d',tz = 'UTC'), 
               act_id = paste(subid,Date4Id,LASAR_ID,TypeIDText,sep = "-"), # fix date format
               act_group = case_when(DupBatchType == 449  ~ paste(subid,Date4group,samplers,sep = "-"), # Duplicates are done once a day by a sampling crew- multiple crews on one day
                                     DupBatchType == 450  ~ paste(subid,samplers,sep = "-"),# Duplicates done by a sampler at regular frequency, but not daily
@@ -107,12 +108,11 @@ res <- data %>%
               result_id = paste(act_id,CharIDText,sep = "-"),
               sub_char = paste(sub_id, CharIDText, sep = "-"),
               actgrp_char = paste(act_group, CharIDText, sep = "-")) %>%
-   select(-TypeFilter, -LastChangeDate, -DEQuse, -MonitoringLocationRequired, -AnalyticalMethodRequired, -SubRevNarrative, -OriginalDate) #sjh# remove columns that shouldn't be needed
+   select(-TypeFilter,-LastChangeDate, -DEQuse, -MonitoringLocationRequired, -AnalyticalMethodRequired, -SubRevNarrative, -OriginalDate) #sjh# remove columns that shouldn't be needed
 
-
+write.csv(res, "res.csv")
 #### QC checks for char and duplicates#### 
 ### should error be corrected in the 4r file? # Not as long as we keep a record of the redundant data that is deleted
-
 ### batching error 
 bad_batch <- res %>%
              filter(act_group == 'ERROR')

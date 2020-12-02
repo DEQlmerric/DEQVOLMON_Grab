@@ -13,21 +13,19 @@ library(RODBC) # added by sjh this is the package needed to run odbcConnect
 options('scipen' = 50, stringsAsFactors = FALSE)
 
 ### Connect to VolMon DB 
-#VM2.sql <- odbcConnect("VolMon2") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
-VM2T.sql <- odbcConnect("VolMon_testload") ### remove test database
-QCcrit <- sqlFetch(VM2T.sql,"dbo.tlu_Qccrit")# %>%  ### this cleans up the QC table to use only one method the low level swwitch to a AbsDiff is handled later
-#                  group_by(charidText) %>%
- #                 mutate(multi = ifelse(n() > 1, 1, 0),
-#                         use = ifelse(multi == 1 & QCcalc == "AbsDiff", 'No','Yes')) %>%
-#                  filter(use == 'Yes') %>% # I'd like this better if it callled this product something other than QCcrit b/c it is filtered
-#                  select(-UnitID,-Units,-Source,-RcharAlias,-multi,-use)
-chars <- sqlFetch(VM2T.sql,"dbo.tlu_Characteristic") #sjh could drop columns 5-7
-anom_crit <- sqlFetch(VM2T.sql,"dbo.tlu_AnomCrit") #sjh..should be converted to tidy table in database see comments
-type <- sqlFetch(VM2T.sql,"dbo.tlu_Type") #sjh could drop columns 5-9
-odbcClose(VM2T.sql)
+VM2.sql <- odbcConnect("VolMon2") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
+#VM2T.sql <- odbcConnect("VolMon_testload") ### remove test database
+QCcrit <- sqlFetch(VM2.sql,"dbo.tlu_Qccrit") %>%  
+           select(-UnitID,-Units,-Source,-RcharAlias)
+chars <- sqlFetch(VM2.sql,"dbo.tlu_Characteristic") %>% select(-PickList, -SampleFractionRequired) #sjh could drop columns 5-7
+anom_crit <- sqlFetch(VM2.sql,"dbo.tlu_AnomCrit") #sjh..should be converted to tidy table in database see comments
+type <- sqlFetch(VM2.sql,"dbo.tlu_Type") %>% select(TypeID,TypeIDText) #sjh could drop columns 5-9
+odbcClose(VM2.sql)
 
  #### Precision Checks & QC summaries ####
-res$LOQ[is.na(res$LOQ)] <- 0  # sjh remove NA's from LOQ field
+#res$LOQ[is.na(res$LOQ)] <- 0  # sjh remove NA's from LOQ field  - LAM 11/19/2020 - is this correct
+
+### This step determines if RPD or absolute difference should be used based the Low Level QC value
 QC_calc_M <- res %>% 
   left_join(chars, by = 'CharIDText') %>% # join char table to get charid
   left_join(QCcrit, by = c('CharID'= 'charid','CharIDText'='charidText')) %>% 
@@ -38,17 +36,16 @@ QC_calc_M <- res %>%
                          n>1 & Result > Low_QC & QCcalc == 'AbsDiff' ~ 0,
                          TRUE ~ 1)) %>% 
   filter(USE == 1) %>% 
-  select(row_ID,CharIDText,QCcalc,DQLA,DQLB,USE) # take out sample_type and Result to avoid duplicate renames (.x & .y) in next step.  may also need to use regular expressions to get rid of .x instead 
+  select(row_ID,CharIDText,QCcalc,DQLA,DQLB,USE) 
 
-
-
+# Adds a precision grade to duplicate samples 
 prec_grade <- res %>% 
         left_join(QC_calc_M, by = c('row_ID','CharIDText')) %>% 
         group_by(row_ID,CharIDText) %>% 
         mutate(n = n(),
                Dup = ifelse(n() > 1, 1, 0)) %>%
         ungroup() %>% 
-        filter(Dup == 1) %>% # pulls out primary and dups
+        filter(Dup == 1) %>% # pulls out primary and dups pairs 
         select(row_ID,LASAR_ID,DateTime,Char,CharIDText,actgrp_char,sub_char,sample_type,Result,result_id,QCcalc,DQLA,DQLB,LOQ) %>%
         group_by(row_ID,CharIDText) %>%
         arrange(desc(sample_type), .by_group = TRUE) %>% # arranges the dataset so that the primary is the first value
@@ -67,8 +64,8 @@ prec_grade <- res %>%
 
 # add prec grade to result, 
 res_prec_grade <- res %>% left_join(prec_grade, by = c('row_ID','result_id','CharIDText')) #%>% # This seems to assign DQL to only dup rather than FP and FD
-#select(row_ID,LASAR_ID,DateTime,subid,act_type,sample_type,TypeIDText,TypeShortName,Date4Id,Date4group,act_id,
-#act_group,CharIDText,result_id,sub_char,actgrp_char,Result,use_DQLA,use_DQLB,prec_val,prec_DQL)
+# removed for now - select(row_ID,LASAR_ID,DateTime,subid,act_type,sample_type,TypeIDText,TypeShortName,Date4Id,Date4group,act_id,
+# removed for now  - act_group,CharIDText,result_id,sub_char,actgrp_char,Result,use_DQLA,use_DQLB,prec_val,prec_DQL)
 
 ## calculate the %QC and %DQL 
 Prelim_DQL_AG_char <- res_prec_grade %>% 
@@ -101,7 +98,7 @@ Prelim_DQL_AG_char <- res_prec_grade %>%
 Prelim_DQL_nonMixed <- res %>% 
   left_join(Prelim_DQL_AG_char, by = 'actgrp_char') %>%
   filter(!prelim_dql == 'Mixed') #%>%
-  #select(LASAR_ID,CharIDText,act_id,act_group,result_id,actgrp_char,prelim_dql)
+  #select(LASAR_ID,CharIDText,act_id,act_group,result_id,actgrp_char,prec_DQL,prelim_dql,QCcalc)
 
 # Spread the Prelim grades to the results to mixed results 
 Prelim_DQL_Mixed <- res %>% 
@@ -110,7 +107,7 @@ Prelim_DQL_Mixed <- res %>%
  
 
 Grade_mixed_QC <- Prelim_DQL_Mixed  %>%
-  left_join(prec_grade, by = c('row_ID','result_id','CharIDText')) %>%
+  left_join(prec_grade, by = c('row_ID','result_id','CharIDText')) %>% #changed input of Prelim_DQL_Mixed
   group_by(row_ID,CharIDText) %>%
   arrange(desc(sample_type), .by_group = TRUE) %>%
   #mutate(prelim_dql = ifelse(sample_type == 'dup' & !is.na(prec_DQL),prec_DQL,prelim_dql)) %>%

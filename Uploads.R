@@ -7,11 +7,10 @@ library(lubridate)
 #library(sqldf)
 #library(DBI)
 
-VM2T.sql <- odbcConnect("VolMon_testload") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
-#t.ActGrp <- sqlFetch(VM2T.sql, "dbo.t_ActGrp") 
-stations <- sqlFetch(VM2T.sql, "dbo.tlu_Stations") # how does this get populated?
-units <- sqlFetch(VM2T.sql, "dbo.tlu_units")
-context <- sqlFetch(VM2T.sql, "dbo.tlu_Context")
+VM2.sql <- odbcConnect("VolMon2") ### this requires an ODBC conection to the VOLMON2 on DEQLEAD-LIMS/dev
+stations <- sqlFetch(VM2.sql, "dbo.tlu_Stations") 
+units <- sqlFetch(VM2.sql, "dbo.tlu_units")
+context <- sqlFetch(VM2.sql, "dbo.tlu_Context")
 #odbcClose(VM2T.sql)
 
 #### t_ActGrp ####
@@ -23,6 +22,7 @@ ActGroup <- final_DQL %>%
             rename(ActGrpComment = Date4group) %>% # what is the comment? 
             select(ActGrpIDText,ActGrpComment,ActGrpTypeID)
 
+write.csv(ActGroup, "ActGroup.csv")
 #### write to the database defined by the connection 
 
 #build a vector string of ActGrpIDTexts for use in SQL query
@@ -33,28 +33,28 @@ ag_sql_fmt <- "SELECT * FROM t_ActGrp WHERE ActGrpIDText IN (%s)"
 qryAGt <- sprintf(ag_sql_fmt, ag_idsString)
 
 ### MUST CONFIRM THIS IS ZERO BEFORE LOADING DATA ###
-QC_actgroup <- sqlQuery(VM2T.sql, qryAGt)             
+QC_actgroup <- sqlQuery(VM2.sql, qryAGt)             
 
 ### Write activity group to the DB ###
 # creates a temporary table 
-sqlSave(VM2T.sql, ActGroup, tablename = "TempActGrp", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE)
-#SQL intset query
+sqlSave(VM2.sql, ActGroup, tablename = "TempActGrp", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE)
+#SQL insert query
 qryAG <- "INSERT INTO t_ActGrp (ActGrpIDText, ActGrpComment, ActGrpTypeID)
 SELECT ActGrpIDText, ActGrpComment, ActGrpTypeID FROM TempActGrp;"
 # run the SQL query 
-sqlQuery(VM2T.sql, qryAG, max = 0, buffsize = length(ActGroup$ActGrpIDText))
+sqlQuery(VM2.sql, qryAG, max = 0, buffsize = length(ActGroup$ActGrpIDText))
 # delete temp table 
-sqlDrop(VM2T.sql, "TempActGrp")
+sqlDrop(VM2.sql, "TempActGrp")
 
 ### MUST CONFIRM THIS NUMBER MATCHES ActGroup ###
-QC_actgroup <- sqlQuery(VM2T.sql, qryAGt)             
+QC_actgroup <- sqlQuery(VM2.sql, qryAGt)             
 
 #### t_Activity ####
 act <- final_DQL %>% 
        select(act_id,act_type,subid,LASAR_ID,DateTime,SubOrganizationID,
               samplers,SampleDepth,SampleDepthUnit,DEQ_Comment,Org_Comment) %>% 
-       left_join(stations, by = c('LASAR' = 'STATION_KEY')) %>%
-       left_join(context, by = c('OrgID'= 'CntextIdText')) %>%
+       left_join(stations, by = c('LASAR_ID' = 'STATION_KEY')) %>%
+       left_join(context, by = c('ContextID'= 'CntextIdText')) %>% # what is this for? 
        #as.character(res$SampleDepthUnit) %>%
        #left_join(units, by = c('SampleDepthUnit' = 'UnitIdText')) # this isn't working beacuse of NA
        mutate(SmplDepthUnitID = ifelse(SampleDepthUnit %like% 'meters', 146,
@@ -67,14 +67,15 @@ act <- final_DQL %>%
               SmplColEquip = NA,
               SmplEquipID = NA,
               SmplColEquipComment = NA) %>%
-       select(act_id,act_type,subid,LASAR_ID,ContextID,StationDes,DateTime,StartDateTimeZoneID,
+       select(act_id,act_type,subid,StationDes,DateTime,StartDateTimeZoneID,
          EndDateTime,EndDateTimeZoneID,MediaID,SubOrganizationID,SmplColMthdID,SmplColEquip,
-         SmplEquipID,SmplColEquipComment,SampleDepth,SmplDepthUnitID,Org_Comment,DEQ_Comment,samplers) %>%  
-       rename(ActivityIDText = act_id, ActivityTypeId =act_type,SubID = subid,SiteID = LASAR_ID,
-              SiteContextID = ContextID, SiteDescription = StationDes, StartDateTime = DateTime,
-              ActivityOrgID = SubOrganizationID,SmplDepth =SampleDepth, Samplers = samplers) %>%
+         SmplEquipID,SmplColEquipComment,SampleDepth,SmplDepthUnitID,Org_Comment,DEQ_Comment,samplers,StnID) %>%  
+       rename(ActivityIDText = act_id, ActivityTypeId =act_type,SubID = subid,
+              SiteDescription = StationDes, StartDateTime = DateTime,
+              ActivityOrgID = SubOrganizationID,SmplDepth =SampleDepth, Samplers = samplers,fkStnID = StnID) %>%
        distinct()
-act$SiteID <- as.character(act$SiteID)
+
+write.csv(act, "act.csv")
 
 #### Interact with the database ###
 #build a vector string of ActivityIDTexts for use in SQL query
@@ -85,40 +86,40 @@ a_sql_fmt <- "SELECT * FROM t_Activity WHERE ActivityIDText IN (%s)"
 qryActt <- sprintf(a_sql_fmt, a_idsString)
 
 ### MUST CONFIRM THIS IS ZERO BEFORE LOADING DATA ###
-QC_act <- sqlQuery(VM2T.sql, qryActt)    
+QC_act <- sqlQuery(VM2.sql, qryActt)    
 
 # write to the database defined by the connection 
 
 # define variable types
-columnTypes <- list(ActivityIDText = "nvarchar(255)",ActivityTypeId = "int" ,SubID = "int",SiteID = "nvarchar(255)",
-                    SiteContextID = "int", SiteDescription = "nvarchar(255)", StartDateTime = "datetime",
+columnTypes <- list(ActivityIDText = "nvarchar(255)",ActivityTypeId = "int" ,SubID = "int",
+                    SiteDescription = "nvarchar(255)", StartDateTime = "datetime",
                     StartDateTimeZoneID = "int",EndDateTime = "datetime",EndDateTimeZoneID = "int", MediaID = "int",
                     ActivityOrgID = "int",SmplColMthdID ="int", SmplColEquip ="nvarchar(255)",SmplEquipID = "nvarchar(255)",
                     SmplColEquipComment= "nvarchar(255)",SmplDepth ="nvarchar(255)",SmplDepthUnitID = "int",
-                    Org_Comment = "nvarchar(255)",DEQ_Comment = "nvarchar(255)",Samplers="nvarchar(255)")
+                    Org_Comment = "nvarchar(255)",DEQ_Comment = "nvarchar(255)",Samplers="nvarchar(255)",fkStnID = "int")
 # creates a temporary table
-VM2T.sql <- odbcConnect("VolMon_testload")
-sqlSave(VM2T.sql, act, tablename = "TempAct", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = columnTypes)
+VM2.sql <- odbcConnect("VolMon2")
+sqlSave(VM2.sql, act, tablename = "TempAct", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = columnTypes)
 
 #SQL insert query
 qryA <- "INSERT INTO t_Activity 
           SELECT * FROM TempAct;"
 
 # run the SQL query 
-sqlQuery(VM2T.sql, qryA, max = 0, buffsize = length(act$ActivityIDText))
+sqlQuery(VM2.sql, qryA, max = 0, buffsize = length(act$ActivityIDText))
 
 ### confirm load number matched act
-QC_act <- sqlQuery(VM2T.sql, qryActt)
+QC_act <- sqlQuery(VM2.sql, qryActt)
 
 # delete temp table 
-sqlDrop(VM2T.sql, "TempAct")
+sqlDrop(VM2.sql, "TempAct")
 
 #### t_Result ####
 # read activity table to get the unique ID
-VM2T.sql <- odbcConnect("VolMon_testload")
-activity <- sqlFetch(VM2T.sql, "dbo.t_Activity")
-units <- sqlFetch(VM2T.sql, "dbo.tlu_units")
-method <- sqlFetch(VM2T.sql, "dbo.tlu_Method")
+VM2.sql <- odbcConnect("VolMon2")
+# activity <- sqlFetch(VM2.sql, "dbo.t_Activity") - trying to use the QC table because it is faster that pulling in the entire table
+units <- sqlFetch(VM2.sql, "dbo.tlu_units")
+method <- sqlFetch(VM2.sql, "dbo.tlu_Method")
 
       
 res_t <- final_DQL  %>% 
@@ -127,7 +128,7 @@ res_t <- final_DQL  %>%
        left_join(chars, by = 'CharIDText') %>%
        left_join(units, by = c('UNITS' = 'UnitIdText')) %>%
        left_join(method, by = c('Method Short Name' = 'ShortName')) %>%
-       left_join(activity, by = c('act_id' = 'ActivityIDText','LASAR_ID' = 'SiteID')) %>%
+       left_join(QC_act, by = c('act_id' = 'ActivityIDText')) %>%  # this reduces having to pull in the whole activity table 
        mutate(RsltTypID = 19, # have to account for nondetect in ?
               AnalyticalLaboratoryID = NA,  # will these be in the template if FieldOrLab = lab?
               AnalyticalStartTime = NA,
@@ -148,10 +149,17 @@ res_t <- final_DQL  %>%
               AnalyticalEndTimeZoneID,LabCommentCode,LOQ,LOQ_UnitID,OG_ACC,OG_PREC,OG_DQL,DEQ_ACC,prec_DQL,
               BiasValue, prec_val,final_DQL,StatisticalBasisID,RsltTimeBasisID,StoretUniqueID,Res_comment,
               DEQ_RsltComment,RsltStatusID) %>%
-      rename(ResultIDText = result_id, PrecisionValue = prec_val,DEQ_PREC = prec_DQL,ORDEQ_DQL = final_DQL,
+      rename(ResultIDText = result_id, MethodSpeciation = 'Method Speciation',PrecisionValue = prec_val,DEQ_PREC = prec_DQL,ORDEQ_DQL = final_DQL,
              Org_RsltComment = Res_comment, StoretQualID = StoretUniqueID,QCorigACC = OG_ACC, QCorigPREC = OG_PREC,
              QCorigDQL = OG_DQL)
-## ADD QC checks for NULLS ###
+
+write.csv(res_t, "res_t.csv")
+
+## QC checks for NULLS - Confirm this is zero if not fix ###
+# checks for Nulls in not null columns  
+res_nulls <- res_t %>% filter(is.null(ActivityID)|is.null(CharID)|is.null(Result)|
+                  is.null(UnitID)|is.null(MethodID)|is.null(RsltTypID)|
+                  is.null(RsltStatusID))
 
 #### Interact with the database ###
 #build a vector string of ActivityIDTexts for use in SQL query
@@ -164,7 +172,7 @@ r_sql_fmt <- "SELECT * FROM t_Result WHERE ResultIDText IN (%s)"
 qryRest <- sprintf(r_sql_fmt, r_idsString)
 
 ### MUST CONFIRM THIS IS ZERO BEFORE LOADING DATA ###
-QC_Res <- sqlQuery(VM2T.sql, qryRest)    
+QC_Res <- sqlQuery(VM2.sql, qryRest)    
 
 # write to the database defined by the connection 
 
@@ -175,42 +183,42 @@ r_columnTypes <- list(ResultIDText = "nvarchar(255)",ActivityID = "int" ,CharID 
                     AnalyticalStartTimeZoneID = "int", AnalyticalEndTime = "datetime", AnalyticalEndTimeZoneID = "int",
                     LabCommentCode = "nvarchar(255)", LOQ = "nvarchar(255)",LOQ_UnitID = "int", QCorigACC = "nvarchar(255)",
                     QCorigPREC = "nvarchar(255)", QCorigDQL = "nvarchar(255)",DEQ_ACC = "nvarchar(255)",DEQ_PREC = "nvarchar(255)",
-                    BiasValue = "nvarchar(255)",PrecisionValue = "nvarchar(255)",ORDEQ_DQL = "nvarchar(255)",StatisticalBasisID = "int",RsltTimeBasisID = "int",
-                    StoretQualID = "int",Org_RsltComment = "nvarchar(max)",DEQ_RsltComment = "nvarchar(max)",RsltStatusID = "int")
+                    BiasValue = "nvarchar(255)",PrecisionValue = "nvarchar(255)",ORDEQ_DQL = "nvarchar(255)",StatisticalBasisID = "int",
+                    RsltTimeBasisID = "int", StoretQualID = "int",Org_RsltComment = "nvarchar(max)",
+                    DEQ_RsltComment = "nvarchar(max)",RsltStatusID = "int")
 # creates a temporary table
-sqlSave(VM2T.sql, res_t, tablename = "TempRes", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = r_columnTypes)
+sqlSave(VM2.sql, res_t, tablename = "TempRes", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = r_columnTypes)
 
 #SQL insert query
 qryR <- "INSERT INTO t_Result 
           SELECT * FROM TempRes;"
 
 # run the SQL query 
-sqlQuery(VM2T.sql, qryR, max = 0, buffsize = length(res_t$ResultIDText))
+sqlQuery(VM2.sql, qryR, max = 0, buffsize = length(res_t$ResultIDText))
 
 ### confirm load number matched act
-QC_Res <- sqlQuery(VM2T.sql, qryRest)
+QC_Res <- sqlQuery(VM2.sql, qryRest)
 
 # delete temp table 
-sqlDrop(VM2T.sql, "TempRes")
+sqlDrop(VM2.sql, "TempRes")
 
-#write.csv(res_t,"res_t.csv")
 
 ####t_anom ####
-VM2T.sql <- odbcConnect("VolMon_testload")
-result <- sqlFetch(VM2T.sql, "dbo.t_Result")
+#VM2.sql <- odbcConnect("VolMon_testload")
+#result <- sqlFetch(VM2.sql, "dbo.t_Result")- using QC_res we don't have to pull in the entire results table 
 
 anom_t <- anom %>% 
           left_join(type, by = c('Anom' = 'TypeIDText')) %>% 
           select(result_id,TypeID) %>% 
-          left_join(result, by = c('result_id' = 'ResultIDText')) %>%
+          left_join(QC_Res, by = c('result_id' = 'ResultIDText')) %>%
           mutate(AnomalyComment = NA) %>%
           select(ResultID,AnomalyComment,TypeID) %>% 
           rename(AnomalyTypeID = TypeID)
+
+write.csv(anom_t, "anom_t.csv")
           
 #### Interact with the database ###
-#build a vector string of ActivityIDTexts for use in SQL query
-######## Add the part to get 
-#left_join(activity, by = c('act_id' = 'ActivityIDText','LASAR' = 'SiteID')) %>%
+#build a vector string of ResultIDTexts for use in SQL query # 
 anom_ids <- anom_t$ResultID
 anom_idsString <- toString(sprintf("'%s'", anom_ids))
 anom_sql_fmt <- "SELECT * FROM t_Anomaly WHERE ResultID IN (%s)"
@@ -218,23 +226,23 @@ anom_sql_fmt <- "SELECT * FROM t_Anomaly WHERE ResultID IN (%s)"
 qryAnom <- sprintf(anom_sql_fmt, anom_idsString)
 
 ### MUST CONFIRM THIS IS ZERO BEFORE LOADING DATA ###
-QC_Anom <- sqlQuery(VM2T.sql, qryAnom)    
+QC_Anom <- sqlQuery(VM2.sql, qryAnom)    
 
 # write to the database defined by the connection 
 anom_columnTypes <- list(ResultID = "int", AnomalyComment = "nvarchar(255)", AnomalyTypeID = "int")
 
 # creates a temporary table
-sqlSave(VM2T.sql, anom_t, tablename = "TempAnom", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = anom_columnTypes)
+sqlSave(VM2.sql, anom_t, tablename = "TempAnom", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = anom_columnTypes)
 
 #SQL insert query
 qryAn <- "INSERT INTO t_Anomaly
           SELECT * FROM TempAnom;"
 
 # run the SQL query 
-sqlQuery(VM2T.sql, qryAn, max = 0, buffsize = length(anom_t$ResultID))
+sqlQuery(VM2.sql, qryAn, max = 0, buffsize = length(anom_t$ResultID))
 
 ### confirm load number matched act
-QC_Anom <- sqlQuery(VM2T.sql, qryAnom)
+QC_Anom <- sqlQuery(VM2.sql, qryAnom)
 
 # delete temp table 
 sqlDrop(VM2T.sql, "TempAnom")
@@ -244,7 +252,7 @@ sqlDrop(VM2T.sql, "TempAnom")
 gd4r <- final_DQL %>%
         select(result_id,subid,DateTime,prelim_dql,anom_sub_95,anom_amb_99,
                anom_amb_95,anom_WQS,anom_BelowLOQ,DQLCmt) %>%
-        left_join(result, by = c('result_id' = 'ResultIDText')) %>% 
+        left_join(QC_Res, by = c('result_id' = 'ResultIDText')) %>% 
         select(ResultID,ActivityID,subid,CharID,DateTime,
                Result,RsltQual,UnitID,StoretQualID,QCorigDQL,DEQ_PREC,
                prelim_dql,ORDEQ_DQL,anom_sub_95,anom_amb_99,
@@ -252,9 +260,7 @@ gd4r <- final_DQL %>%
        rename(SubmissionID = subid, StartDateTime = DateTime, final_DQL= ORDEQ_DQL)
               
 #### Interact with the database ###
-#build a vector string of ActivityIDTexts for use in SQL query
-######## Add the part to get 
-#left_join(activity, by = c('act_id' = 'ActivityIDText','LASAR' = 'SiteID')) %>%
+#build a vector string of ResultIDTexts for use in SQL query
 gd4r_ids <- gd4r$ResultID
 gd4r_idsString <- toString(sprintf("'%s'", gd4r_ids))
 gd4r_sql_fmt <- "SELECT * FROM grabdataforreview WHERE ResultID IN (%s)"
@@ -262,7 +268,7 @@ gd4r_sql_fmt <- "SELECT * FROM grabdataforreview WHERE ResultID IN (%s)"
 qrygd4r <- sprintf(gd4r_sql_fmt, gd4r_idsString)
 
 ### MUST CONFIRM THIS IS ZERO BEFORE LOADING DATA ###
-QC_gd4r <- sqlQuery(VM2T.sql, qrygd4r)    
+QC_gd4r <- sqlQuery(VM2.sql, qrygd4r)    
 
 # write to the database defined by the connection 
 gd4r_columnTypes <- list(ResultID = "int", ActivityID = "int", SubmissionID = "int",
@@ -273,19 +279,19 @@ gd4r_columnTypes <- list(ResultID = "int", ActivityID = "int", SubmissionID = "i
                          final_DQL = "nvarchar(255)", anom_sub_95 = "int", anom_amb_99 = "int",
                          anom_amb_95 = "int", anom_WQS = "int", anom_BelowLOQ = "int",
                          DQLCmt = "nvarchar(255)")
-
+write.csv(gd4r,"gd4r.csv")
 # creates a temporary table
-sqlSave(VM2T.sql, gd4r, tablename = "Tempgd4r", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = gd4r_columnTypes)
+sqlSave(VM2.sql, gd4r, tablename = "Tempgd4r", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = gd4r_columnTypes)
 
 #SQL insert query
 qryGD <- "INSERT INTO grabdataforreview
           SELECT * FROM Tempgd4r;"
 
 # run the SQL query 
-sqlQuery(VM2T.sql, qryGD, max = 0, buffsize = length(gd4r$ResultID))
+sqlQuery(VM2.sql, qryGD, max = 0, buffsize = length(gd4r$ResultID))
 
 ### confirm load number matched act
-QC_gd4r <- sqlQuery(VM2T.sql, qrygd4r) 
+QC_gd4r <- sqlQuery(VM2.sql, qrygd4r) 
 
 # delete temp table 
-sqlDrop(VM2T.sql, "Tempgd4r")
+sqlDrop(VM2.sql, "Tempgd4r")
