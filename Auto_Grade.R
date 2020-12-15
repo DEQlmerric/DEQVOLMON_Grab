@@ -2,14 +2,15 @@
 ## 4/24/2020
 ## Rewrite of scripts originally written by Steve Hanson
 
-library(tidyverse)
-library(odbc) # is this the right package?  it did not support the odbcConnect function.
-library(readxl)
-library(data.table)
-library(fuzzyjoin)
-library(RODBC) # added by sjh this is the package needed to run odbcConnect
+#library(tidyverse)
+#library(odbc) # is this the right package?  it did not support the odbcConnect function.
+#library(readxl)
+#library(fuzzyjoin)
+#library(RODBC) # added by sjh this is the package needed to run odbcConnect
 
 #This prevents scientific notation from being used and forces all imported fields to be character or numeric
+AutoGrade_Anom <- function(res) {
+  
 options('scipen' = 50, stringsAsFactors = FALSE)
 
 ### Connect to VolMon DB 
@@ -26,7 +27,7 @@ odbcClose(VM2.sql)
 #res$LOQ[is.na(res$LOQ)] <- 0  # sjh remove NA's from LOQ field  - LAM 11/19/2020 - is this correct
 
 ### This step determines if RPD or absolute difference should be used based the Low Level QC value
-QC_calc_M <- res %>% 
+{QC_calc_M <- res %>% 
   left_join(chars, by = 'CharIDText') %>% # join char table to get charid
   left_join(QCcrit, by = c('CharID'= 'charid','CharIDText'='charidText')) %>% 
   filter(sample_type == 'sample') %>%
@@ -105,19 +106,17 @@ Prelim_DQL_Mixed <- res %>%
   left_join(Prelim_DQL_AG_char, by = 'actgrp_char')  %>%
   filter(prelim_dql == 'Mixed') 
  
-
-Grade_mixed_QC <- Prelim_DQL_Mixed  %>%
+# This runs when there are mixed QC in the activity 
+if(nrow(Prelim_DQL_Mixed)>0){
+  Grade_mixed_QC <- Prelim_DQL_Mixed  %>%
   left_join(prec_grade, by = c('row_ID','result_id','CharIDText')) %>% #changed input of Prelim_DQL_Mixed
   group_by(row_ID,CharIDText) %>%
   arrange(desc(sample_type), .by_group = TRUE) %>%
   #mutate(prelim_dql = ifelse(sample_type == 'dup' & !is.na(prec_DQL),prec_DQL,prelim_dql)) %>%
-                                
   select(row_ID,LASAR_ID,CharIDText,act_id,act_group,result_id,actgrp_char,sample_type,prec_DQL,prelim_dql, DateTime) %>%
-  
   arrange(actgrp_char) %>%
   filter(sample_type == "dup")
  
-
 
 # This bit figures out when the DQLs apply
 # This sets the start and end dates for when the QC applies. 
@@ -145,17 +144,15 @@ QC_applicability <- Grade_mixed_QC %>%
                                    prec_DQL < lead(prec_DQL, n = 1) ~ DateTime + seconds(1),
                                    prec_DQL > lead(prec_DQL, n = 1) ~ lead(DateTime) - seconds(1),
                                    prec_DQL == lead(prec_DQL, n = 1) ~ lead(DateTime) - seconds(1),
-                                   TRUE ~ DateTime + years(1000)
-                                   )
-           ) %>%
+                                   TRUE ~ DateTime + years(1000))) %>%
   ungroup() %>%
-  select(actgrp_char,prec_DQL,ApplicableStart, ApplicableEnd )
+  select(actgrp_char,prec_DQL,ApplicableStart, ApplicableEnd)
 
 
 #join the WC dataframe to results dataframe to find DQL value
 # fuzzy_left_join will join between dates
 
-grade_mixed_result <- Prelim_DQL_Mixed %>% 
+ grade_mixed_result <- Prelim_DQL_Mixed %>% 
   fuzzy_left_join(QC_applicability, by = c('actgrp_char' = 'actgrp_char', # ==
                                            'DateTime' = 'ApplicableStart', # DT >= AS
                                            'DateTime' = 'ApplicableEnd'), # DT <= AE
@@ -163,13 +160,15 @@ grade_mixed_result <- Prelim_DQL_Mixed %>%
   mutate(prelim_dql = prec_DQL) %>%
   select(-actgrp_char.y, -ApplicableStart, -ApplicableEnd, -prec_DQL ) %>%
   rename('actgrp_char' = 'actgrp_char.x') 
+
+ Prelim_DQL_All <- rbind(Prelim_DQL_nonMixed,grade_mixed_result)}
   
-
-
-Prelim_DQL_All <- rbind(Prelim_DQL_nonMixed,grade_mixed_result)
+# This runs if there are isn't mixed QC in the activity 
+if(nrow(Prelim_DQL_Mixed) == 0) {
+Prelim_DQL_All <- Prelim_DQL_nonMixed }}
 
 #### generate a table of anomolies for each result #### 
-sub_char_precen <- Prelim_DQL_All %>%
+{sub_char_precen <- Prelim_DQL_All %>%
                 group_by(CharIDText) %>% 
                 summarise(percen_5th = quantile(Result, probs = .05),
                           percen_10th = quantile(Result, probs = .10), 
@@ -234,7 +233,7 @@ anom_res_sum = res_anom %>%
             anom_amb_95 = sum(AnomTypeCode == 'ambient_95'),
             anom_WQS = sum(AnomTypeCode =='ViolateWQS'),
             anom_BelowLOQ = sum(AnomTypeCode == 'BelowLOQ')) %>%
-  replace(is.na(.), 0)
+  replace(is.na(.), 0) }
 
 final_DQL <- Prelim_DQL_All %>%
   left_join(anom_res_sum, by = "result_id") %>%
@@ -245,4 +244,6 @@ final_DQL <- Prelim_DQL_All %>%
                                         prelim_dql > "H"  ~ "Anom", # this pulls out QC less than 10% - not sure why %like% didn't work
                                         TRUE ~ as.character( prelim_dql))) %>%
   mutate(DQLCmt = "") 
+ .GlobalEnv$final_DQL <- final_DQL
+ .GlobalEnv$QC_calc_M <- QC_calc_M}
 

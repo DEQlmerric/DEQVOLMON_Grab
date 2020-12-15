@@ -1,7 +1,6 @@
-### VolMon Plots 
+### Generates Plots and data summaries 
 
-library(ggplot2)
-
+Plots_QCSum <- function(final_DQL) {
 ##### generate summaries #### 
 # Data summary 
 CharSum <- final_DQL %>% 
@@ -105,25 +104,52 @@ write.csv(qcsum, file = paste0(sub_id,'_QCSummary.csv'))
 #box plot 
 ##### Box Plots by Parameter ####
 box_plots <- final_DQL %>% 
-  #filter(CharIDText == 'do') %>% 
   select(row_ID,LASAR_ID,DateTime,Result,sample_type,CharIDText,act_group,actgrp_char) 
 box_plots$LASAR_ID <- as.factor(box_plots$LASAR_ID)
 
+# all in one
 p <- 
   ggplot(box_plots, aes(x = LASAR_ID, y = Result)) + 
   geom_boxplot() + theme(axis.text.x = element_text(angle = 90)) +
-  facet_grid(rows = vars(CharIDText),scales = "free") 
+  facet_grid(rows = vars(CharIDText),scales = "free") +
+  labs(x = "Station", y = "Result Value") 
 
-ggsave(paste0(sub_id,'BoxPlot_Char.png'))
+ggsave(paste0(sub_id,'BoxPlot_AllChar.png'))
+
+# individual plots per char 
+for (var in unique(box_plots$CharIDText)) {
+  #dev.new()
+  ggplot(box_plots[box_plots$CharIDText==var,], aes(x = LASAR_ID, y = Result)) +
+  geom_boxplot() + theme(axis.text.x = element_text(angle = 90)) +
+  ggtitle(var)  + labs(x = "Station", y = "Result Value ")
+  ggsave(filename = paste(sub_id,var,'box_plot.png'))
+}
 
 #### duplicate Comparison by Parameter - Time Series Charts of Duplicate Differences (prec_value#####
-
+# all in one 
 d <- ggplot(data=prec_grade_plot, aes(x = DateTime, y = prec_val)) + geom_point() +
-     geom_line(aes(y = (use_DQLA), color = "red", linetype = "dotted")) + 
-     geom_line(aes(y = (use_DQLB), color = "blue", linetype = "dotted")) +
-     geom_line(aes(y = (use_DQLA_Low), color = "red", linetype = "dotted")) + 
-     geom_line(aes(y = (use_DQLB_Low), color = "blue", linetype = "dotted")) +
-     facet_grid(rows = vars(CharIDText),scales = "free") 
+     geom_line(data = prec_grade_plot,aes(y = use_DQLA), color = "red") + 
+     geom_line(data = prec_grade_plot,aes(y = use_DQLB), color = "blue") + 
+     geom_line(data = prec_grade_plot,aes(y = use_DQLA_Low), color = "red") + 
+     geom_line(data = prec_grade_plot,aes(y = use_DQLB_Low), color = "blue") + 
+     facet_grid(rows = vars(CharIDText),scales = "free") +
+     labs(x = "Sample Date", y = "Precision Value") +
+     theme(legend.position="none") 
+
+ggsave(paste0(sub_id,'PrecisionValue_AllChar.png'))
+
+# individual plots per char 
+for (var in unique(box_plots$CharIDText)) {
+  #dev.new()
+  ggplot(data=prec_grade_plot, aes(x = DateTime, y = prec_val)) + geom_point() +
+    geom_line(data = prec_grade_plot,aes(y = use_DQLA), color = "red") + 
+    geom_line(data = prec_grade_plot,aes(y = use_DQLB), color = "blue") + 
+    geom_line(data = prec_grade_plot,aes(y = use_DQLA_Low), color = "red") + 
+    geom_line(data = prec_grade_plot,aes(y = use_DQLB_Low), color = "blue") + 
+    labs(x = "Sample Date", y = "Precision Value") +
+    theme(legend.position="none") 
+  ggsave(filename = paste(sub_id,var,'PrecisionValue.png'))
+}
 
 #### results primary vs. dup ####
 QC_plots <- final_DQL %>% 
@@ -149,7 +175,9 @@ for (var in unique(QC_plots$CharIDText)) {
            ggtitle(var) + geom_line(aes(x = sample, y= A_QC_L), color = "orangered1", linetype = "dotted",size = 1) +
            geom_line(aes(x = sample, y= A_QC_U), color = "orangered1", linetype = "dotted", size = 1) +
            geom_line(aes(x = sample, y= B_QC_U), color = "darkblue", linetype = "dotted",size = 1)+ 
-           geom_line(aes(x = sample, y= B_QC_L), color = "darkblue", linetype = "dotted",size = 1)
+           geom_line(aes(x = sample, y= B_QC_L), color = "darkblue", linetype = "dotted",size = 1) +
+           labs(x = "Field Primary", y = "Field Duplicate") +
   ggsave(filename = paste(sub_id,var,'FPvFD.png'))
 }
- 
+
+}
