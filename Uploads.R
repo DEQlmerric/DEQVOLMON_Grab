@@ -37,7 +37,7 @@ QC_actgroup <- sqlQuery(VM2.sql, qryAGt)
 
 ### Write activity group to the DB ###
 # creates a temporary table 
-sqlSave(VM2.sql, ActGroup, tablename = "TempActGrp", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE)
+sqlSave(VM2.sql, ActGroup, tablename = "TempActGrp", append = TRUE, rownames = FALSE, colnames = FALSE, safer = TRUE)
 #SQL insert query
 qryAG <- "INSERT INTO t_ActGrp (ActGrpIDText, ActGrpComment, ActGrpTypeID)
 SELECT ActGrpIDText, ActGrpComment, ActGrpTypeID FROM TempActGrp;"
@@ -99,7 +99,8 @@ columnTypes <- list(ActivityIDText = "nvarchar(255)",ActivityTypeId = "int" ,Sub
                     Org_Comment = "nvarchar(255)",DEQ_Comment = "nvarchar(255)",Samplers="nvarchar(255)",fkStnID = "int")
 # creates a temporary table
 VM2.sql <- odbcConnect("VolMon2")
-sqlSave(VM2.sql, act, tablename = "TempAct", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = columnTypes)
+sqlSave(VM2.sql, act, tablename = "TempAct", append = TRUE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = columnTypes)
+#SQL insert query
 
 #SQL insert query
 qryA <- "INSERT INTO t_Activity 
@@ -111,8 +112,18 @@ sqlQuery(VM2.sql, qryA, max = 0, buffsize = length(act$ActivityIDText))
 ### confirm load number matched act
 QC_act <- sqlQuery(VM2.sql, qryActt)
 
-# delete temp table 
-sqlDrop(VM2.sql, "TempAct")
+# delete content of temp table 
+qryA_clear <- "DELETE FROM TempAct;"
+sqlQuery(VM2.sql, qryA_clear)
+
+
+#### tjct_ActGrp2Act ####
+ActGrp2Act <- final_DQL %>%
+              select(act_group,Date4group, act_id) %>%
+              left_join(QC_act, by = c('act_id' = 'ActivityIDText'))%>%
+              left_join(QC_actgroup, by = c('act_group' = 'ActGrpIDText')) %>%
+              select(ActGrpID,ActivityID,Date4group)
+
 
 #### t_Result ####
 # read activity table to get the unique ID
@@ -187,7 +198,7 @@ r_columnTypes <- list(ResultIDText = "nvarchar(255)",ActivityID = "int" ,CharID 
                     RsltTimeBasisID = "int", StoretQualID = "int",Org_RsltComment = "nvarchar(max)",
                     DEQ_RsltComment = "nvarchar(max)",RsltStatusID = "int")
 # creates a temporary table
-sqlSave(VM2.sql, res_t, tablename = "TempRes", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = r_columnTypes)
+sqlSave(VM2.sql, res_t, tablename = "TempRes", append = TRUE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = r_columnTypes)
 
 #SQL insert query
 qryR <- "INSERT INTO t_Result 
@@ -232,7 +243,7 @@ QC_Anom <- sqlQuery(VM2.sql, qryAnom)
 anom_columnTypes <- list(ResultID = "int", AnomalyComment = "nvarchar(255)", AnomalyTypeID = "int")
 
 # creates a temporary table
-sqlSave(VM2.sql, anom_t, tablename = "TempAnom", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = anom_columnTypes)
+sqlSave(VM2.sql, anom_t, tablename = "TempAnom", append = TRUE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = anom_columnTypes)
 
 #SQL insert query
 qryAn <- "INSERT INTO t_Anomaly
@@ -245,7 +256,7 @@ sqlQuery(VM2.sql, qryAn, max = 0, buffsize = length(anom_t$ResultID))
 QC_Anom <- sqlQuery(VM2.sql, qryAnom)
 
 # delete temp table 
-sqlDrop(VM2T.sql, "TempAnom")
+sqlDrop(VM2.sql, "TempAnom")
 
 #### Grab data for Review #### 
 
@@ -281,7 +292,7 @@ gd4r_columnTypes <- list(ResultID = "int", ActivityID = "int", SubmissionID = "i
                          DQLCmt = "nvarchar(255)")
 write.csv(gd4r,"gd4r.csv")
 # creates a temporary table
-sqlSave(VM2.sql, gd4r, tablename = "Tempgd4r", append = FALSE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = gd4r_columnTypes)
+sqlSave(VM2.sql, gd4r, tablename = "Tempgd4r", append = TRUE, rownames = FALSE, colnames = FALSE, safer = TRUE, varTypes = gd4r_columnTypes)
 
 #SQL insert query
 qryGD <- "INSERT INTO grabdataforreview

@@ -148,7 +148,7 @@ name_check <- res %>%
 #AllRsltFlds <- paste0(rep(project$CharID, each = length(charsfx)), charsfx) # Create list of result fields based on characteristic list from project info sheet
 #NoPrjDatFlds <- names(data)[-which(names(data) %in% AllRsltFlds)] # identified all the field names from Excel data tab not expected from project info char list
 #for (i in charsfx) { # My apologies for the for loop
-    #MissingProjectFields <- NoPrjDatFlds[endsWith(NoPrjDatFlds,i)]} # I think this should give a vector of result fields in data worksheet but not defined in project worksheet.
+#MissingProjectFields <- NoPrjDatFlds[endsWith(NoPrjDatFlds,i)]} # I think this should give a vector of result fields in data worksheet but not defined in project worksheet.
 
 
             
