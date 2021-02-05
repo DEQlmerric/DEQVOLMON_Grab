@@ -245,5 +245,7 @@ final_DQL <- Prelim_DQL_All %>%
                                         TRUE ~ as.character( prelim_dql))) %>%
   mutate(DQLCmt = "") 
  .GlobalEnv$final_DQL <- final_DQL
- .GlobalEnv$QC_calc_M <- QC_calc_M}
+ .GlobalEnv$QC_calc_M <- QC_calc_M
+ .GlobalEnv$prec_grade <- prec_grade
+ .GlobalEnv$anom <- anom}
 
