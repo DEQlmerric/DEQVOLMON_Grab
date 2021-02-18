@@ -122,7 +122,8 @@ ActGrp2Act <- final_DQL %>%
               left_join(QC_act, by = c('act_id' = 'ActivityIDText'))%>%
               left_join(QC_actgroup, by = c('act_group' = 'ActGrpIDText')) %>%
               select(ActGrpID,ActivityID,Date4group) %>%
-              rename(AG2AComment = Date4group)
+              rename(AG2AComment = Date4group) %>%
+              distinct()
 
 #build a vector string of ActGrpIDTexts for use in SQL query
 act_ids <- ActGrp2Act$ActivityID 
