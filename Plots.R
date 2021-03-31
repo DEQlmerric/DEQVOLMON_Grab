@@ -2,7 +2,7 @@
 
 Plots_QCSum <- function(final_DQL) {
 ##### generate summaries #### 
-# Data summary 
+# Data summary - gets percentiles for each parameter
 CharSum <- final_DQL %>% 
            group_by(CharIDText) %>% 
            summarise(n = length(Result),
@@ -23,6 +23,7 @@ CharSum <- final_DQL %>%
           select(LASAR_ID,CharIDText,n,Mean,Min,Fifth,Tenth,Twentieth,
                  TwentyFifth,Median,SeventyFifth,Eightieth,Ninetieth,NinetyFifth,Max)
 
+#Data summary - gets percentiles for each parameter/station combo
 SampleSummary <- final_DQL %>% 
                  group_by(LASAR_ID,CharIDText) %>% 
                  summarise(n = length(Result),
@@ -40,12 +41,13 @@ SampleSummary <- final_DQL %>%
                             NinetyFifth = quantile(Result,probs=.95),
                             Max = max(Result))
 
+# brings the two sets together and renames the columns 
 DataSummary<-rbind(CharSum,SampleSummary) 
 names(DataSummary) = c("Station", "Characteristic","Count", "Mean", "Min", "5th %", 
                        "10th %", "20th %","25th %", "Median", "75th %","80th %", "90th %", "95th %", "Max")
 write.csv(DataSummary, file = paste0(sub_id,'_DataSummary.csv'))
 
-# QC summary - hmmmm 
+# QC summary - Precision summaries that compare the sample and field replicate
 prec_grade_plot <- res %>% 
   left_join(QC_calc_M, by = c('row_ID','CharIDText')) %>% 
   group_by(row_ID,CharIDText) %>% 
@@ -61,15 +63,15 @@ prec_grade_plot <- res %>%
                               QCcalc == "AbsDiff" ~ (Result - lag(Result, default = first(Result))),  # using abs here may mess up the charts and statisitcs.
                               QCcalc == "RPD" ~ 
                                 ((Result - lag(Result, default = first(Result)))/mean(Result))),
-         use_DQLA = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLA < LOQ, LOQ ,DQLA)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation 
-         use_DQLB = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLB < LOQ, LOQ*2,DQLB)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation
-         prec_DQL = case_when(prec_val <= use_DQLA ~ "A", 
-                              prec_val > use_DQLA & prec_val <= use_DQLB ~ "B",
+         #use_DQLA = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLA < LOQ, LOQ ,DQLA)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation 
+         #use_DQLB = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLB < LOQ, LOQ*2,DQLB)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation
+         prec_DQL = case_when(prec_val <= DQLA ~ "A", 
+                              prec_val > DQLA & prec_val <= DQLB ~ "B",
                               TRUE ~ "C")) %>%
   filter(sample_type == 'dup') %>%
-  mutate(use_DQLA_Low = use_DQLA*(-1),
-         use_DQLB_Low = use_DQLB*(-1)) %>%
-  select(row_ID,CharIDText,DateTime,QCcalc,prec_val,use_DQLA,use_DQLB,prec_DQL,use_DQLA_Low,use_DQLB_Low)
+  mutate(DQLA_Low = DQLA*(-1),
+         DQLB_Low = DQLB*(-1)) %>%
+  select(row_ID,CharIDText,DateTime,QCcalc,prec_val,DQLA,DQLB,prec_DQL,DQLA_Low,DQLB_Low)
 
 
 qcsum <- prec_grade_plot  %>%
@@ -128,24 +130,24 @@ for (var in unique(box_plots$CharIDText)) {
 #### duplicate Comparison by Parameter - Time Series Charts of Duplicate Differences (prec_value#####
 # all in one 
 d <- ggplot(data=prec_grade_plot, aes(x = DateTime, y = prec_val)) + geom_point() +
-     geom_line(data = prec_grade_plot,aes(y = use_DQLA), color = "red") + 
-     geom_line(data = prec_grade_plot,aes(y = use_DQLB), color = "blue") + 
-     geom_line(data = prec_grade_plot,aes(y = use_DQLA_Low), color = "red") + 
-     geom_line(data = prec_grade_plot,aes(y = use_DQLB_Low), color = "blue") + 
+     geom_line(data = prec_grade_plot,aes(y = DQLA), color = "red") + 
+     geom_line(data = prec_grade_plot,aes(y = DQLB), color = "blue") + 
+     geom_line(data = prec_grade_plot,aes(y = DQLA_Low), color = "red") + 
+     geom_line(data = prec_grade_plot,aes(y = DQLB_Low), color = "blue") + 
      facet_grid(rows = vars(CharIDText),scales = "free") +
      labs(x = "Sample Date", y = "Precision Value") +
      theme(legend.position="none") 
 
 ggsave(paste0(sub_id,'PrecisionValue_AllChar.png'))
 
-# individual plots per char 
-for (var in unique(box_plots$CharIDText)) {
+# individual plots per char - these just aren't working :( - comment out?
+for (var in unique(prec_grade_plot$CharIDText)) {
   #dev.new()
   ggplot(data=prec_grade_plot, aes(x = DateTime, y = prec_val)) + geom_point() +
-    geom_line(data = prec_grade_plot,aes(y = use_DQLA), color = "red") + 
-    geom_line(data = prec_grade_plot,aes(y = use_DQLB), color = "blue") + 
-    geom_line(data = prec_grade_plot,aes(y = use_DQLA_Low), color = "red") + 
-    geom_line(data = prec_grade_plot,aes(y = use_DQLB_Low), color = "blue") + 
+    geom_line(data = prec_grade_plot,aes(y = DQLA), color = "red") + 
+    geom_line(data = prec_grade_plot,aes(y = DQLB), color = "blue") + 
+    geom_line(data = prec_grade_plot,aes(y = DQLA_Low), color = "red") + 
+    geom_line(data = prec_grade_plot,aes(y = DQLB_Low), color = "blue") + 
     labs(x = "Sample Date", y = "Precision Value") +
     theme(legend.position="none") 
   ggsave(filename = paste(sub_id,var,'PrecisionValue.png'))
@@ -160,12 +162,12 @@ QC_plots <- final_DQL %>%
             filter(QC == 1) %>%#  pulls out primary and dups pairs 
             left_join(prec_grade_plot, by = c('row_ID','CharIDText','DateTime')) %>%
             select(row_ID,LASAR_ID,DateTime,Result,sample_type,CharIDText,act_group,actgrp_char,
-                       use_DQLA,use_DQLB) %>% 
+                   prec_val,DQLA,DQLB) %>% 
                spread(sample_type, Result) %>% 
-               mutate(A_QC_U = sample + use_DQLA,
-                      A_QC_L = sample - use_DQLA,
-                      B_QC_U = sample + use_DQLB,
-                      B_QC_L = sample - use_DQLB) 
+               mutate(A_QC_U = sample + DQLA,
+                      A_QC_L = sample - DQLA,
+                      B_QC_U = sample + DQLB,
+                      B_QC_L = sample - DQLB) 
 
 write.csv(QC_plots, file = paste0(sub_id,'_QCplots.csv'))
 

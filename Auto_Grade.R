@@ -51,17 +51,17 @@ prec_grade <- res %>%
         group_by(row_ID,CharIDText) %>%
         arrange(desc(sample_type), .by_group = TRUE) %>% # arranges the dataset so that the primary is the first value
         mutate(prec_val = case_when(QCcalc == "LogDiff" ~
-                                    log10(Result) - log10(lag(Result, default = first(Result))),
-                                    QCcalc == "AbsDiff" ~ abs(Result - lag(Result, default = first(Result))),  # using abs here may mess up the charts and statisitcs.
+                                    abs(log10(Result) - log10(lag(Result, default = first(Result)))),
+                                    QCcalc == "AbsDiff" ~ abs(Result - lag(Result, default = first(Result))),  # using abs here may mess up the charts and statistics.
                                     QCcalc == "RPD" ~ 
                                     abs((Result - lag(Result, default = first(Result)))/mean(Result))),
-               use_DQLA = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLA < LOQ, LOQ ,DQLA)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation 
-               use_DQLB = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLB < LOQ, LOQ*2,DQLB)), # Change QC criteria when the abslolute difference criteria is less than the limit of quantitation
-               prec_DQL = case_when(prec_val <= use_DQLA ~ "A", 
-                                    prec_val > use_DQLA & prec_val <= use_DQLB ~ "B",
+               # 3/28/21 - not sure why we added this removing for now - use_DQLA = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLA < LOQ, LOQ ,DQLA)), # Change QC criteria when the absolute difference criteria is less than the LOQ 
+               #3/28/21 - not sure why we added this removing for now - use_DQLB = as.numeric(ifelse(QCcalc == 'AbsDiff' & DQLB < LOQ, LOQ*2,DQLB)), # Change QC criteria when the absolute difference criteria is less than the LOQ
+               prec_DQL = case_when(prec_val <= DQLA ~ "A", 
+                                    prec_val > DQLA & prec_val <= DQLB ~ "B",
                                     TRUE ~ "C")) %>%
         filter(sample_type == 'dup') %>% # filter dup to get the prec_value 
-        select(row_ID,CharIDText,result_id,QCcalc,prec_val,use_DQLA,use_DQLB,prec_DQL)  # 
+        select(row_ID,CharIDText,result_id,QCcalc,prec_val,DQLA,DQLB,prec_DQL)  # 
 
 # add prec grade to result, 
 res_prec_grade <- res %>% left_join(prec_grade, by = c('row_ID','result_id','CharIDText')) #%>% # This seems to assign DQL to only dup rather than FP and FD
@@ -71,7 +71,7 @@ res_prec_grade <- res %>% left_join(prec_grade, by = c('row_ID','result_id','Cha
 ## calculate the %QC and %DQL 
 Prelim_DQL_AG_char <- res_prec_grade %>% 
                       select(row_ID,LASAR_ID,DateTime,subid,act_type,sample_type,TypeIDText,TypeShortName,Date4Id,Date4group,act_id,
-                      act_group,CharIDText,result_id,sub_char,actgrp_char,Result,use_DQLA,use_DQLB,prec_val,prec_DQL) %>%
+                      act_group,CharIDText,result_id,sub_char,actgrp_char,Result,DQLA,DQLB,prec_val,prec_DQL) %>%
                       mutate(A = ifelse(prec_DQL %in% 'A',1,0),
                              B = ifelse(prec_DQL %in%  'B',1,0),
                              C = ifelse(prec_DQL %in%  'C', 1, 0),
