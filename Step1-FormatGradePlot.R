@@ -36,3 +36,6 @@ AutoGrade_Anom(res)
 Plots_QCSum(final_DQL)
 # creates database tables 
 DB_tables(final_DQL)
+
+# saves the project for LAM to upload to VolMon2
+save.image(file = "Step1.RData")
