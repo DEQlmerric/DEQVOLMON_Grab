@@ -16,6 +16,7 @@ chars <- sqlFetch(VM2.sql,"dbo.tlu_Characteristic")
 context <- sqlFetch(VM2.sql, "dbo.tlu_Context")
 method <- sqlFetch(VM2.sql, "dbo.tlu_Method")
 org <- sqlFetch(VM2.sql, "tlu_Organization")
+stations <- sqlFetch(VM2.sql, "dbo.tlu_Stations") 
 
 #builds an SQL query the activity table for this submission    
 a_ids <- act$ActivityIDText

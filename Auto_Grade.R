@@ -94,7 +94,8 @@ Prelim_DQL_AG_char <- res_prec_grade %>%
                                                     pctB == 1 ~ "B", #100% QC samples = B assign B
                                                     pctC == 1 ~ "C", #100% QC samples = B assign B
                                                     pctA < 1 | pctB < 1 | pctC < 1 ~ "Mixed",))
-
+#write this activity group summary
+write.csv(Prelim_DQL_AG_char, file = paste0(sub_id,'_ActGroup_char_summary.csv'))
 # Spread the Prelim grades to activity groups that don't have mixed DQLs  
 Prelim_DQL_nonMixed <- res %>% 
   left_join(Prelim_DQL_AG_char, by = 'actgrp_char') %>%
