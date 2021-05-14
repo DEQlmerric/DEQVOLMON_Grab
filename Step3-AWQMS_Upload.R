@@ -17,6 +17,7 @@ context <- sqlFetch(VM2.sql, "dbo.tlu_Context")
 method <- sqlFetch(VM2.sql, "dbo.tlu_Method")
 org <- sqlFetch(VM2.sql, "tlu_Organization")
 stations <- sqlFetch(VM2.sql, "dbo.tlu_Stations") 
+units <- sqlFetch(VM2.sql, "dbo.tlu_units")
 
 #builds an SQL query the activity table for this submission    
 a_ids <- act$ActivityIDText
@@ -43,11 +44,12 @@ r_sql_fmt <- "SELECT * FROM t_Result WHERE ResultIDText IN (%s)"
 qryRest <- sprintf(r_sql_fmt, r_idsString)
 
 ### pulls in result info ###
-db_res <- sqlQuery(VM2.sql, qryRest) %>% 
-          select(ActivityID,CharID,Result,UnitID,MethodID,MethodSpeciation,RsltTypeID,
+db_res <- sqlQuery(VM2.sql, r_sql_fmt) %>% 
+          select(ActivityID,CharID,RsltQual,Result,UnitID,MethodID,MethodSpeciation,RsltTypeID,
                  AnalyticalLaboratoryID,AnalyticalStartTime,AnalyticalStartTimeZoneID,
                  AnalyticalEndTime,AnalyticalEndTimeZoneID,LabCommentCode,LOQ,BiasValue,
-                 PrecisionValue,StatisticalBasisID,RsltTimeBasisID,ORDEQ_DQL,Org_RsltComment) %>%
+                 PrecisionValue,StatisticalBasisID,RsltTimeBasisID,ORDEQ_DQL,Org_RsltComment,
+                 DEQ_RsltComment) %>%
           tidyr::separate(AnalyticalStartTime, c("AnStartDate", "AnStartTime"), sep = " ") %>%
           tidyr::separate(AnalyticalEndTime, c("AnEndDate", "AnEndTime"), sep = " ") %>%
           left_join(chars,by = 'CharID') %>%
@@ -55,12 +57,16 @@ db_res <- sqlQuery(VM2.sql, qryRest) %>%
           left_join(method, by = 'MethodID') %>%
           left_join(org, by = c('AnalyticalLaboratoryID'='OrgID')) %>%
           left_join(db_act, by = 'ActivityID') %>% 
+          mutate(comment = ifelse(!is.na(Org_RsltComment),paste(Org_RsltComment,DEQ_RsltComment, sep = ":"),
+                          DEQ_RsltComment),
+                 result = ifelse(!is.na(RsltQual),paste(RsltQual,Result, sep = ""),
+                                 Result)) %>% 
           select(ActivityTypeId,MLocID,StartDate,StartTime,StartDateTimeZoneID,
                  EndDate,EndTime,EndDateTimeZoneID,SmplColEquipComment,SmplDepth,
-                 SmplDepthUnitID,Org_Comment,CharAbbr,Result,UnitIdText,ShortName,
+                 SmplDepthUnitID,Org_Comment,CharAbbr,result,UnitIdText,ShortName,
                  MethodSpeciation,RsltTypeID,OrgName,AnStartDate,AnStartTime,AnalyticalStartTimeZoneID,
                  AnEndDate,AnEndTime,AnalyticalEndTimeZoneID,LabCommentCode,LOQ,BiasValue,
-                 PrecisionValue,StatisticalBasisID,RsltTimeBasisID,ORDEQ_DQL,Org_RsltComment)
+                 PrecisionValue,StatisticalBasisID,RsltTimeBasisID,ORDEQ_DQL,comment)
 
 # write file for upload
 write.csv(db_res,"//deqlab1/Vol_Data/umpqua/2018-2019/Grab_Data_2018-2019/Ump_ref_18_19/AWQMS_UmpRef18-19VolWQGrabDataSub.csv",na = "",row.names = FALSE)

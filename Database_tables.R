@@ -93,7 +93,9 @@ anom_t <- anom %>%
   #left_join(QC_Res, by = c('result_id' = 'ResultIDText')) %>%
   mutate(AnomalyComment = NA) %>%
   select(result_id,AnomalyComment,TypeID) %>% 
-  rename(AnomalyTypeID = TypeID) 
+  rename(AnomalyTypeID = TypeID)
+
+.GlobalEnv$anom_t <- anom_t
 }
 
 
