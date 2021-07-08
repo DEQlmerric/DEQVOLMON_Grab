@@ -14,12 +14,15 @@ type <- sqlFetch(VM2.sql,"dbo.tlu_Type") %>% select(TypeID,TypeIDText)
 
 #### t_ActGrp ####
 ActGroup <- final_DQL %>%
-  select(act_group,Date4group) %>% 
+  select(act_group,Date4group,DupBatchType) %>% 
   distinct() %>% 
   mutate(ActGrpIDText = act_group,  
-         ActGrpTypeID = 311) %>%# I need to understand what the other options are  
-  rename(ActGrpComment = Date4group) %>% # what is the comment? 
-  select(ActGrpIDText,ActGrpComment,ActGrpTypeID)
+         ActGrpTypeID = 311,
+         ActGrpComment = ifelse(DupBatchType == 450, 
+                                'batched through calendar year by sampler',
+                                Date4group)) %>% # I need to understand what the other options are  
+  select(ActGrpIDText,ActGrpComment,ActGrpTypeID) %>%
+  distinct()
 # 
 .GlobalEnv$ActGroup <- ActGroup
 #write.csv(ActGroup, "ActGroup.csv")
